@@ -1,0 +1,372 @@
+import Foundation
+
+/// Represents a sync operation to be performed
+public struct SyncOperation: Sendable {
+    public enum OperationType: Sendable {
+        case copy
+        case delete
+        case update
+    }
+
+    public let type: OperationType
+    public let relativePath: String
+    public let left: String?  // nil for delete operations
+    public let right: String
+}
+
+/// Conflict resolution strategy for two-way sync
+public enum ConflictResolution: Sendable {
+    case keepNewest
+    case keepLeft
+    case keepRight
+    case skip
+}
+
+/// Sync mode
+public enum SyncMode: Sendable {
+    case oneWay
+    case twoWay(conflictResolution: ConflictResolution)
+}
+
+/// Result of a sync operation
+public struct SyncResult: Sendable {
+    public let operations: [SyncOperation]
+    public let succeeded: Int
+    public let failed: Int
+    public let skipped: Int
+
+    public var totalOperations: Int {
+        succeeded + failed + skipped
+    }
+}
+
+public enum DirectorySyncError: Error, Sendable {
+    case invalidDirectory(String)
+    case accessDenied(String)
+    case operationFailed(String)
+
+    /// Converts a DirectoryDifferenceError to a DirectorySyncError
+    static func from(error: DirectoryDifferenceError) -> DirectorySyncError {
+        switch error {
+        case .invalidDirectory(let path):
+            return .invalidDirectory(path)
+        case .accessDenied(let message):
+            return .accessDenied(message)
+        }
+    }
+}
+
+/// Synchronizes two directories
+/// - Parameters:
+///   - leftPath: Path to the left directory
+///   - rightPath: Path to the right directory
+///   - mode: Sync mode (one-way or two-way with conflict resolution)
+///   - recursive: Whether to sync subdirectories recursively (default: true)
+///   - dryRun: If true, only plan operations without executing them (default: false)
+/// - Returns: A `SyncResult` containing the operations performed and their results
+/// - Throws: `DirectorySyncError` if directories are invalid or operations fail
+public func directorySync(
+    left leftPath: String,
+    right rightPath: String,
+    mode: SyncMode,
+    recursive: Bool = true,
+    dryRun: Bool = false
+) async throws -> SyncResult {
+    let diff: DirectoryDifference
+    do {
+        diff = try await directoryDifference(
+            left: leftPath,
+            right: rightPath,
+            recursive: recursive
+        )
+    } catch let error as DirectoryDifferenceError {
+        throw DirectorySyncError.from(error: error)
+    }
+
+    // Plan sync operations based on mode
+    let operations = try await planSyncOperations(
+        diff: diff,
+        leftPath: leftPath,
+        rightPath: rightPath,
+        mode: mode
+    )
+
+    // Execute operations if not in dry-run mode
+    if dryRun {
+        return SyncResult(
+            operations: operations, succeeded: 0, failed: 0, skipped: operations.count)
+    } else {
+        return try await executeSyncOperations(operations)
+    }
+}
+
+/// Plans sync operations based on the directory difference and sync mode
+private func planSyncOperations(
+    diff: DirectoryDifference,
+    leftPath: String,
+    rightPath: String,
+    mode: SyncMode
+) async throws -> [SyncOperation] {
+    switch mode {
+    case .oneWay:
+        return planOneWaySync(diff: diff, leftPath: leftPath, rightPath: rightPath)
+    case .twoWay(let conflictResolution):
+        return try await planTwoWaySync(
+            diff: diff,
+            leftPath: leftPath,
+            rightPath: rightPath,
+            conflictResolution: conflictResolution
+        )
+    }
+}
+
+/// Plans one-way sync operations (left -> right)
+private func planOneWaySync(
+    diff: DirectoryDifference,
+    leftPath: String,
+    rightPath: String
+) -> [SyncOperation] {
+    var operations: [SyncOperation] = []
+
+    // Copy files only in left
+    for relativePath in diff.onlyInLeft {
+        let left = URL(fileURLWithPath: leftPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+        let right = URL(fileURLWithPath: rightPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+
+        operations.append(
+            SyncOperation(
+                type: .copy,
+                relativePath: relativePath,
+                left: left,
+                right: right
+            ))
+    }
+
+    // Delete files only in right
+    for relativePath in diff.onlyInRight {
+        let right = URL(fileURLWithPath: rightPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+
+        operations.append(
+            SyncOperation(
+                type: .delete,
+                relativePath: relativePath,
+                left: nil,
+                right: right
+            ))
+    }
+
+    // Update modified files
+    for relativePath in diff.modified {
+        let left = URL(fileURLWithPath: leftPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+        let right = URL(fileURLWithPath: rightPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+
+        operations.append(
+            SyncOperation(
+                type: .update,
+                relativePath: relativePath,
+                left: left,
+                right: right
+            ))
+    }
+
+    return operations
+}
+
+/// Plans two-way sync operations with conflict resolution
+private func planTwoWaySync(
+    diff: DirectoryDifference,
+    leftPath: String,
+    rightPath: String,
+    conflictResolution: ConflictResolution
+) async throws -> [SyncOperation] {
+    var operations: [SyncOperation] = []
+
+    // Copy files only in left to right
+    for relativePath in diff.onlyInLeft {
+        let left = URL(fileURLWithPath: leftPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+        let right = URL(fileURLWithPath: rightPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+
+        operations.append(
+            SyncOperation(
+                type: .copy,
+                relativePath: relativePath,
+                left: left,
+                right: right
+            ))
+    }
+
+    // Copy files only in right to left
+    for relativePath in diff.onlyInRight {
+        let left = URL(fileURLWithPath: rightPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+        let right = URL(fileURLWithPath: leftPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+
+        operations.append(
+            SyncOperation(
+                type: .copy,
+                relativePath: relativePath,
+                left: left,
+                right: right
+            ))
+    }
+
+    // Handle modified files based on conflict resolution strategy
+    for relativePath in diff.modified {
+        let leftFile = URL(fileURLWithPath: leftPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+        let rightFile = URL(fileURLWithPath: rightPath)
+            .appendingPathComponent(relativePath)
+            .path(percentEncoded: false)
+
+        let operation = try await resolveConflict(
+            relativePath: relativePath,
+            leftFile: leftFile,
+            rightFile: rightFile,
+            resolution: conflictResolution
+        )
+
+        if let op = operation {
+            operations.append(op)
+        }
+    }
+
+    return operations
+}
+
+/// Resolves a conflict between two modified files
+private func resolveConflict(
+    relativePath: String,
+    leftFile: String,
+    rightFile: String,
+    resolution: ConflictResolution
+) async throws -> SyncOperation? {
+    switch resolution {
+    case .skip:
+        return nil
+
+    case .keepLeft:
+        return SyncOperation(
+            type: .update,
+            relativePath: relativePath,
+            left: leftFile,
+            right: rightFile
+        )
+
+    case .keepRight:
+        return SyncOperation(
+            type: .update,
+            relativePath: relativePath,
+            left: rightFile,
+            right: leftFile
+        )
+
+    case .keepNewest:
+        let fileManager = FileManager.default
+        let leftAttrs = try fileManager.attributesOfItem(atPath: leftFile)
+        let rightAttrs = try fileManager.attributesOfItem(atPath: rightFile)
+
+        guard let leftDate = leftAttrs[.modificationDate] as? Date,
+            let rightDate = rightAttrs[.modificationDate] as? Date
+        else {
+            // If we can't determine dates, skip
+            return nil
+        }
+
+        if leftDate > rightDate {
+            // Left is newer, copy to right
+            return SyncOperation(
+                type: .update,
+                relativePath: relativePath,
+                left: leftFile,
+                right: rightFile
+            )
+        } else if rightDate > leftDate {
+            // Right is newer, copy to left
+            return SyncOperation(
+                type: .update,
+                relativePath: relativePath,
+                left: rightFile,
+                right: leftFile
+            )
+        } else {
+            // Same modification time, skip
+            return nil
+        }
+    }
+}
+
+/// Executes a list of sync operations
+private func executeSyncOperations(_ operations: [SyncOperation]) async throws -> SyncResult {
+    var succeeded = 0
+    var failed = 0
+    let skipped = 0
+
+    for operation in operations {
+        do {
+            try await executeSyncOperation(operation)
+            succeeded += 1
+        } catch {
+            failed += 1
+        }
+    }
+
+    return SyncResult(
+        operations: operations,
+        succeeded: succeeded,
+        failed: failed,
+        skipped: skipped
+    )
+}
+
+/// Executes a single sync operation
+private func executeSyncOperation(_ operation: SyncOperation) async throws {
+    try await Task.detached {
+        let fileManager = FileManager.default
+
+        switch operation.type {
+        case .copy, .update:
+            guard let left = operation.left else {
+                throw DirectorySyncError.operationFailed("No left for copy/update operation")
+            }
+
+            // Create right directory if needed
+            let rightURL = URL(fileURLWithPath: operation.right)
+            let rightDir = rightURL.deletingLastPathComponent()
+            try fileManager.createDirectory(
+                at: rightDir,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+
+            // Copy file (will overwrite if exists for update operations)
+            if fileManager.fileExists(atPath: operation.right) {
+                try fileManager.removeItem(atPath: operation.right)
+            }
+            try fileManager.copyItem(atPath: left, toPath: operation.right)
+
+        case .delete:
+            // Delete file
+            if fileManager.fileExists(atPath: operation.right) {
+                try fileManager.removeItem(atPath: operation.right)
+            }
+        }
+    }.value
+}

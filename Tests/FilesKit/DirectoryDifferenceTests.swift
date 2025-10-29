@@ -7,44 +7,16 @@ import Testing
 @Suite("DirectoryDifference")
 struct DirectoryDifferenceTests {
 
-    // MARK: - Test Helpers
-
-    /// Creates a temporary directory with the specified files
-    func createTestDirectory(files: [String: String]) throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        for (path, content) in files {
-            let fileURL = tempDir.appendingPathComponent(path)
-            let dirURL = fileURL.deletingLastPathComponent()
-
-            // Create subdirectories if needed - always create to be safe
-            try FileManager.default.createDirectory(
-                at: dirURL, withIntermediateDirectories: true)
-
-            try content.write(to: fileURL, atomically: true, encoding: .utf8)
-        }
-
-        return tempDir
-    }
-
-    /// Cleans up a test directory
-    func cleanupTestDirectory(_ url: URL) throws {
-        try FileManager.default.removeItem(at: url)
-    }
-
     // MARK: - Tests for Identical Directories
 
     @Test("Identical empty directories")
     func identicalEmptyDirectories() async throws {
-        let leftDir = try createTestDirectory(files: [:])
-        let rightDir = try createTestDirectory(files: [:])
+        let leftDir = try TestHelpers.createTestDirectory(files: [:])
+        let rightDir = try TestHelpers.createTestDirectory(files: [:])
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -66,12 +38,12 @@ struct DirectoryDifferenceTests {
             "file3.txt": "content3",
         ]
 
-        let leftDir = try createTestDirectory(files: files)
-        let rightDir = try createTestDirectory(files: files)
+        let leftDir = try TestHelpers.createTestDirectory(files: files)
+        let rightDir = try TestHelpers.createTestDirectory(files: files)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -98,12 +70,12 @@ struct DirectoryDifferenceTests {
         ]
         let rightFiles: [String: String] = [:]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -127,12 +99,12 @@ struct DirectoryDifferenceTests {
             "right2.txt": "content",
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -159,12 +131,12 @@ struct DirectoryDifferenceTests {
             "right_only.txt": "right content",
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -192,12 +164,12 @@ struct DirectoryDifferenceTests {
             "modified.txt": "version 2"
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -225,12 +197,12 @@ struct DirectoryDifferenceTests {
             "same.txt": "identical",
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -256,12 +228,12 @@ struct DirectoryDifferenceTests {
             "file.txt": "much longer content here"
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -286,12 +258,12 @@ struct DirectoryDifferenceTests {
             "subdir/nested.txt": "nested content",
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -316,12 +288,12 @@ struct DirectoryDifferenceTests {
             "subdir/nested.txt": "nested content",
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -344,12 +316,12 @@ struct DirectoryDifferenceTests {
             "a/b/c/d/deep.txt": "deep content"
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -366,10 +338,10 @@ struct DirectoryDifferenceTests {
 
     @Test("Invalid left directory throws error")
     func invalidLeftDirectory() async throws {
-        let rightDir = try createTestDirectory(files: [:])
+        let rightDir = try TestHelpers.createTestDirectory(files: [:])
 
         defer {
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         await #expect(throws: DirectoryDifferenceError.self) {
@@ -382,10 +354,10 @@ struct DirectoryDifferenceTests {
 
     @Test("Invalid right directory throws error")
     func invalidRightDirectory() async throws {
-        let leftDir = try createTestDirectory(files: [:])
+        let leftDir = try TestHelpers.createTestDirectory(files: [:])
 
         defer {
-            try? cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
         }
 
         await #expect(throws: DirectoryDifferenceError.self) {
@@ -408,11 +380,11 @@ struct DirectoryDifferenceTests {
 
     @Test("File path instead of directory throws error")
     func filePathInsteadOfDirectory() async throws {
-        let dir = try createTestDirectory(files: ["file.txt": "content"])
+        let dir = try TestHelpers.createTestDirectory(files: ["file.txt": "content"])
         let filePath = dir.appendingPathComponent("file.txt").path(percentEncoded: false)
 
         defer {
-            try? cleanupTestDirectory(dir)
+            try? TestHelpers.cleanupTestDirectory(dir)
         }
 
         await #expect(throws: DirectoryDifferenceError.self) {
@@ -442,12 +414,12 @@ struct DirectoryDifferenceTests {
             "subdir/nested_common.txt": "same",
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -480,12 +452,12 @@ struct DirectoryDifferenceTests {
             "empty.txt": ""
         ]
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
@@ -509,12 +481,12 @@ struct DirectoryDifferenceTests {
             rightFiles["file\(i).txt"] = "content \(i)"
         }
 
-        let leftDir = try createTestDirectory(files: leftFiles)
-        let rightDir = try createTestDirectory(files: rightFiles)
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
 
         defer {
-            try? cleanupTestDirectory(leftDir)
-            try? cleanupTestDirectory(rightDir)
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
         let diff = try await directoryDifference(
