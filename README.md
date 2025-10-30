@@ -406,5 +406,27 @@ Keep two working directories in sync:
 files sync ~/projects/myapp /mnt/desktop/projects/myapp --two-way --conflict-resolution newest
 ```
 
+# Building
+
+```
+swift build -c release \
+  -Xswiftc -O \
+  -Xswiftc -whole-module-optimization \
+  -Xswiftc -cross-module-optimization
+```
+
+# Installation
+
+You can copy it to your PATH:
+
+```bash
+cp .build/release/files /usr/local/bin/
+```
+
+Or create a symlink:
+
+```bash
+ln -s $(pwd)/.build/release/files /usr/local/bin/files
+```
 
 LICENSE: MIT

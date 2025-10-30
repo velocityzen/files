@@ -1,6 +1,5 @@
 import Foundation
 
-
 /// Represents a sync operation to be performed
 public struct SyncOperation: Sendable {
     public enum OperationType: Sendable {
