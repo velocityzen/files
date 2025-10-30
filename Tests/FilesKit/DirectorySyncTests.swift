@@ -45,8 +45,8 @@ struct DirectorySyncTests {
         #expect(try TestHelpers.readFile(at: file2) == "content2")
     }
 
-    @Test("One-way sync: delete files only in right")
-    func oneWaySyncDeleteFiles() async throws {
+    @Test("One-way sync: no deletions by default")
+    func oneWaySyncNoDeletesByDefault() async throws {
         let leftFiles: [String: String] = [:]
         let rightFiles = [
             "old1.txt": "old content",
@@ -65,6 +65,41 @@ struct DirectorySyncTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay
+        )
+
+        // Should have no operations since deletions are disabled by default
+        #expect(result.succeeded == 0)
+        #expect(result.failed == 0)
+        #expect(result.operations.count == 0)
+
+        // Verify files were NOT deleted
+        let file1 = rightDir.appendingPathComponent("old1.txt")
+        let file2 = rightDir.appendingPathComponent("old2.txt")
+        #expect(TestHelpers.fileExists(at: file1))
+        #expect(TestHelpers.fileExists(at: file2))
+    }
+
+    @Test("One-way sync: delete files when deletions enabled")
+    func oneWaySyncDeleteFilesWhenEnabled() async throws {
+        let leftFiles: [String: String] = [:]
+        let rightFiles = [
+            "old1.txt": "old content",
+            "old2.txt": "old content",
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let result = try await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            mode: .oneWay,
+            deletions: true
         )
 
         #expect(result.succeeded == 2)
@@ -137,7 +172,8 @@ struct DirectorySyncTests {
         let result = try await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
-            mode: .oneWay
+            mode: .oneWay,
+            deletions: true
         )
 
         #expect(result.succeeded == 4)  // 2 copies + 1 update + 1 delete
@@ -477,6 +513,7 @@ struct DirectorySyncTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
+            deletions: true,
             dryRun: true
         )
 

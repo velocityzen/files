@@ -2,13 +2,8 @@ import Foundation
 
 /// Represents the differences between two directories
 public struct DirectoryDifference: Sendable {
-    /// Files that exist only in the left directory
     public let onlyInLeft: Set<String>
-
-    /// Files that exist only in the right directory
     public let onlyInRight: Set<String>
-
-    /// Files that exist in both directories
     public let common: Set<String>
 
     /// Files that exist in both but have different content
@@ -30,12 +25,14 @@ public enum DirectoryDifferenceError: Error, Sendable {
 ///   - leftPath: Path to the left directory
 ///   - rightPath: Path to the right directory
 ///   - recursive: Whether to compare subdirectories recursively (default: true)
+///   - includeOnlyInRight: If true, includes files only in right directory in the result (default: true). Set to false for optimization when you don't need to know about right-only files.
 /// - Returns: A `DirectoryDifference` containing the differences between the directories
 /// - Throws: `DirectoryDifferenceError` if directories are invalid or inaccessible
 public func directoryDifference(
     left leftPath: String,
     right rightPath: String,
-    recursive: Bool = true
+    recursive: Bool = true,
+    includeOnlyInRight: Bool = true
 ) async throws -> DirectoryDifference {
     let fileManager = FileManager.default
 
@@ -52,9 +49,26 @@ public func directoryDifference(
         throw DirectoryDifferenceError.invalidDirectory(rightPath)
     }
 
-    async let leftFiles = scanDirectory(at: leftPath, recursive: recursive)
-    async let rightFiles = scanDirectory(at: rightPath, recursive: recursive)
-    let (filesLeft, filesRight) = try await (leftFiles, rightFiles)
+    let filesLeft = try await scanDirectory(at: leftPath, recursive: recursive)
+
+    if !includeOnlyInRight {
+        // Optimized path: only check if left files exist in right
+        let (common, modified) = try await checkLeftFilesInRight(
+            leftFiles: filesLeft,
+            leftPath: leftPath,
+            rightPath: rightPath
+        )
+
+        return DirectoryDifference(
+            onlyInLeft: filesLeft.subtracting(common).subtracting(modified),
+            onlyInRight: [],
+            common: common,
+            modified: modified
+        )
+    }
+
+    // Full scan: compare both directories
+    let filesRight = try await scanDirectory(at: rightPath, recursive: recursive)
 
     let onlyInLeft = filesLeft.subtracting(filesRight)
     let onlyInRight = filesRight.subtracting(filesLeft)
@@ -73,6 +87,57 @@ public func directoryDifference(
         common: common.subtracting(modified),
         modified: modified
     )
+}
+
+/// Checks which files from left exist in right and which are modified
+/// This is an optimization that avoids scanning the entire right directory
+private func checkLeftFilesInRight(
+    leftFiles: Set<String>,
+    leftPath: String,
+    rightPath: String
+) async throws -> (common: Set<String>, modified: Set<String>) {
+    try await withThrowingTaskGroup(of: (String, FileStatus).self) { group in
+        for relativePath in leftFiles {
+            group.addTask {
+                let fileLeft = URL(fileURLWithPath: leftPath)
+                    .appendingPathComponent(relativePath)
+                    .path(percentEncoded: false)
+                let fileRight = URL(fileURLWithPath: rightPath)
+                    .appendingPathComponent(relativePath)
+                    .path(percentEncoded: false)
+
+                let fileManager = FileManager.default
+                guard fileManager.fileExists(atPath: fileRight) else {
+                    return (relativePath, .onlyInLeft)
+                }
+
+                let isDifferent = try await filesAreDifferent(fileLeft, fileRight)
+                return (relativePath, isDifferent ? .modified : .same)
+            }
+        }
+
+        var common = Set<String>()
+        var modified = Set<String>()
+
+        for try await (file, status) in group {
+            switch status {
+            case .same:
+                common.insert(file)
+            case .modified:
+                modified.insert(file)
+            case .onlyInLeft:
+                break  // Will be in onlyInLeft by subtraction
+            }
+        }
+
+        return (common, modified)
+    }
+}
+
+private enum FileStatus {
+    case same
+    case modified
+    case onlyInLeft
 }
 
 /// Scans a directory and returns relative paths of all files

@@ -37,6 +37,9 @@ extension Files {
         @Flag(name: .long, inversion: .prefixedNo, help: "Scan subdirectories recursively")
         var recursive: Bool = true
 
+        @Flag(name: .long, help: "Delete files in destination that don't exist in source (one-way sync only)")
+        var deletions: Bool = false
+
         @Flag(name: .long, help: "Preview changes without applying them")
         var dryRun: Bool = false
 
@@ -63,6 +66,7 @@ extension Files {
                     right: destinationPath,
                     mode: syncMode,
                     recursive: recursive,
+                    deletions: deletions,
                     dryRun: dryRun
                 )
 

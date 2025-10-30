@@ -63,19 +63,22 @@ files sync <source-directory> <destination-directory> [options]
 - `--two-way` - Enable bidirectional sync (default: one-way)
 - `--conflict-resolution STRATEGY` - For two-way sync: `newest` (default), `source`, `destination`, `skip`
 - `--recursive` / `--no-recursive` - Scan subdirectories recursively (default: recursive)
+- `--deletions` - Delete files in destination that don't exist in source (one-way sync only, default: false)
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
 
 #### Sync Modes
 
-**One-way sync** (default): Mirrors source to destination
+**One-way sync** (default): Copies and updates files from source to destination
 - Copies files that exist only in source
-- Deletes files that exist only in destination
 - Updates files that differ between source and destination
+- By default, does NOT delete files that exist only in destination
+- Use `--deletions` flag to delete extra files in destination (mirrors source exactly)
 
 **Two-way sync** (`--two-way`): Bidirectional synchronization
 - Copies files that exist only in either directory to the other
+- Never deletes files (syncs in both directions)
 - Resolves conflicts for modified files based on `--conflict-resolution` strategy
 
 #### Conflict Resolution Strategies
@@ -207,12 +210,56 @@ fi
 
 ### Sync Examples
 
-#### Basic one-way sync
+#### Basic one-way sync (without deletions)
 
-Mirror source to destination (preview with dry-run):
+Copy and update files from source to destination (extra files in destination are kept):
 
 ```bash
 files sync /source/dir /backup/dir --dry-run --verbose
+```
+
+Output:
+```
+🔍 DRY RUN - No changes will be made
+
+Would perform 4 operation(s)
+
+Copy (3):
+  would copy new-file.txt
+  would copy docs/guide.md
+  would copy src/main.swift
+
+Update (1):
+  would update config.yaml
+```
+
+Execute the sync:
+
+```bash
+files sync /source/dir /backup/dir --verbose
+```
+
+Output:
+```
+Performed 4 operation(s)
+
+Copy (3):
+  copied new-file.txt
+  copied docs/guide.md
+  copied src/main.swift
+
+Update (1):
+  updated config.yaml
+
+Summary: 4 succeeded, 0 failed, 0 skipped
+```
+
+#### One-way sync with deletions
+
+Mirror source to destination exactly (deletes extra files in destination):
+
+```bash
+files sync /source/dir /backup/dir --deletions --dry-run --verbose
 ```
 
 Output:
@@ -236,7 +283,7 @@ Delete (1):
 Execute the sync:
 
 ```bash
-files sync /source/dir /backup/dir --verbose
+files sync /source/dir /backup/dir --deletions --verbose
 ```
 
 Output:
@@ -333,14 +380,14 @@ Output:
 ```bash
 #!/bin/bash
 
-# Mirror production to backup with dry-run check first
+# Mirror production to backup with exact mirroring (including deletions)
 echo "Checking what would change..."
-files sync /production /backup --dry-run --format summary
+files sync /production /backup --deletions --dry-run --format summary
 
 read -p "Proceed with sync? (y/n) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    files sync /production /backup --verbose
+    files sync /production /backup --deletions --verbose
     if [ $? -eq 0 ]; then
         echo "Backup completed successfully"
     else
