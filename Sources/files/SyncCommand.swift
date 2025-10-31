@@ -37,7 +37,9 @@ extension Files {
         @Flag(name: .long, inversion: .prefixedNo, help: "Scan subdirectories recursively")
         var recursive: Bool = true
 
-        @Flag(name: .long, help: "Delete files in destination that don't exist in source (one-way sync only)")
+        @Flag(
+            name: .long,
+            help: "Delete files in destination that don't exist in source (one-way sync only)")
         var deletions: Bool = false
 
         @Flag(name: .long, help: "Preview changes without applying them")
@@ -70,40 +72,30 @@ extension Files {
                     dryRun: dryRun
                 )
 
-                printResults(result: result, format: format, verbose: verbose, dryRun: dryRun)
+                printSyncResults(result: result, format: format, verbose: verbose, dryRun: dryRun)
 
                 if !dryRun && result.failed > 0 {
                     throw ExitCode(1)
                 }
             } catch let error as DirectorySyncError {
-                printError(error)
+                OutputFormatter.printError(error)
                 throw ExitCode(2)
             }
         }
 
-        func printError(_ error: DirectorySyncError) {
-            switch error {
-            case .invalidDirectory(let path):
-                FileHandle.standardError.write(Data("Error: Invalid directory: \(path)\n".utf8))
-            case .accessDenied(let message):
-                FileHandle.standardError.write(Data("Error: Access denied: \(message)\n".utf8))
-            case .operationFailed(let message):
-                FileHandle.standardError.write(Data("Error: Operation failed: \(message)\n".utf8))
-            }
-        }
-
-        func printResults(result: SyncResult, format: OutputFormat, verbose: Bool, dryRun: Bool) {
+        func printSyncResults(
+            result: SyncResult, format: OutputFormat, verbose: Bool, dryRun: Bool
+        ) {
             switch format {
             case .text:
-                printTextFormat(result: result, verbose: verbose, dryRun: dryRun)
-            case .json:
-                printJSONFormat(result: result)
-            case .summary:
-                printSummaryFormat(result: result, dryRun: dryRun)
+                printSyncTextFormat(result: result, verbose: verbose, dryRun: dryRun)
+            case .json, .summary:
+                OutputFormatter.printSyncResults(
+                    result: result, format: format, verbose: verbose, dryRun: dryRun)
             }
         }
 
-        func printTextFormat(result: SyncResult, verbose: Bool, dryRun: Bool) {
+        func printSyncTextFormat(result: SyncResult, verbose: Bool, dryRun: Bool) {
             if result.operations.isEmpty {
                 print("✓ Directories are in sync - no operations needed")
                 return
@@ -119,7 +111,7 @@ extension Files {
             let deletes = result.operations.filter { $0.type == .delete }
 
             if !copies.isEmpty {
-                printOperationList(
+                OutputFormatter.printOperationList(
                     "Copy", verb: dryRun ? "would copy" : "copied", operations: copies,
                     verbose: verbose
                 )
@@ -127,14 +119,14 @@ extension Files {
             }
 
             if !updates.isEmpty {
-                printOperationList(
+                OutputFormatter.printOperationList(
                     "Update", verb: dryRun ? "would update" : "updated", operations: updates,
                     verbose: verbose)
                 print()
             }
 
             if !deletes.isEmpty {
-                printOperationList(
+                OutputFormatter.printOperationList(
                     "Delete", verb: dryRun ? "would delete" : "deleted", operations: deletes,
                     verbose: verbose)
                 print()
@@ -144,64 +136,6 @@ extension Files {
                 print(
                     "Summary: \(result.succeeded) succeeded, \(result.failed) failed, \(result.skipped) skipped"
                 )
-            }
-        }
-
-        func printOperationList(
-            _ title: String, verb: String, operations: [SyncOperation], verbose: Bool
-        ) {
-            print("\(title) (\(operations.count)):")
-            if verbose {
-                for op in operations.sorted(by: { $0.relativePath < $1.relativePath }) {
-                    print("  \(verb) \(op.relativePath)")
-                }
-            } else {
-                print("  Use --verbose to see file list")
-            }
-        }
-
-        func printJSONFormat(result: SyncResult) {
-            let operations = result.operations.map { op in
-                [
-                    "type": String(describing: op.type),
-                    "path": op.relativePath,
-                    "left": op.left ?? "",
-                    "right": op.right,
-                ]
-            }
-
-            let resultDict: [String: Any] = [
-                "operations": operations,
-                "summary": [
-                    "total": result.totalOperations,
-                    "succeeded": result.succeeded,
-                    "failed": result.failed,
-                    "skipped": result.skipped,
-                ],
-            ]
-
-            if let jsonData = try? JSONSerialization.data(
-                withJSONObject: resultDict, options: .prettyPrinted),
-                let jsonString = String(data: jsonData, encoding: .utf8)
-            {
-                print(jsonString)
-            }
-        }
-
-        func printSummaryFormat(result: SyncResult, dryRun: Bool) {
-            let copies = result.operations.filter { $0.type == .copy }.count
-            let updates = result.operations.filter { $0.type == .update }.count
-            let deletes = result.operations.filter { $0.type == .delete }.count
-
-            print("Total operations: \(result.operations.count)")
-            print("Copy: \(copies)")
-            print("Update: \(updates)")
-            print("Delete: \(deletes)")
-
-            if !dryRun {
-                print("Succeeded: \(result.succeeded)")
-                print("Failed: \(result.failed)")
-                print("Skipped: \(result.skipped)")
             }
         }
     }
