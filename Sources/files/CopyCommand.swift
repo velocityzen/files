@@ -31,6 +31,9 @@ extension Files {
         @Option(name: .long, help: "Output format: text (default), json, summary")
         var format: OutputFormat = .text
 
+        @Flag(name: .long, help: "Disable .filesignore pattern matching")
+        var noIgnore: Bool = false
+
         mutating func run() async throws {
             do {
                 if dryRun {
@@ -44,7 +47,8 @@ extension Files {
                     mode: .oneWay,
                     recursive: true,
                     deletions: false,
-                    dryRun: dryRun
+                    dryRun: dryRun,
+                    ignore: noIgnore ? Ignore() : nil
                 )
 
                 printCopyResults(

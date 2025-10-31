@@ -26,13 +26,15 @@ public enum DirectoryDifferenceError: Error, Sendable {
 ///   - rightPath: Path to the right directory
 ///   - recursive: Whether to compare subdirectories recursively (default: true)
 ///   - includeOnlyInRight: If true, includes files only in right directory in the result (default: true). Set to false for optimization when you don't need to know about right-only files.
+///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
 /// - Returns: A `DirectoryDifference` containing the differences between the directories
 /// - Throws: `DirectoryDifferenceError` if directories are invalid or inaccessible
 public func directoryDifference(
     left leftPath: String,
     right rightPath: String,
     recursive: Bool = true,
-    includeOnlyInRight: Bool = true
+    includeOnlyInRight: Bool = true,
+    ignore: Ignore? = nil
 ) async throws -> DirectoryDifference {
     let fileManager = FileManager.default
 
@@ -49,7 +51,11 @@ public func directoryDifference(
         throw DirectoryDifferenceError.invalidDirectory(rightPath)
     }
 
-    let filesLeft = try await scanDirectory(at: leftPath, recursive: recursive)
+    // Load ignore patterns if not provided
+    let patterns = ignore ?? Ignore.load(leftPath: leftPath, rightPath: rightPath)
+
+    let filesLeft = try await scanDirectory(
+        at: leftPath, recursive: recursive, ignore: patterns)
 
     if !includeOnlyInRight {
         // Optimized path: only check if left files exist in right
@@ -68,7 +74,8 @@ public func directoryDifference(
     }
 
     // Full scan: compare both directories
-    let filesRight = try await scanDirectory(at: rightPath, recursive: recursive)
+    let filesRight = try await scanDirectory(
+        at: rightPath, recursive: recursive, ignore: patterns)
 
     let onlyInLeft = filesLeft.subtracting(filesRight)
     let onlyInRight = filesRight.subtracting(filesLeft)
@@ -141,7 +148,9 @@ private enum FileStatus {
 }
 
 /// Scans a directory and returns relative paths of all files
-private func scanDirectory(at path: String, recursive: Bool) async throws -> Set<String> {
+private func scanDirectory(at path: String, recursive: Bool, ignore: Ignore)
+    async throws -> Set<String>
+{
     let baseURL = URL(fileURLWithPath: path)
 
     return try await Task.detached {
@@ -169,7 +178,9 @@ private func scanDirectory(at path: String, recursive: Bool) async throws -> Set
 
         for case let fileURL as URL in allObjects {
             let resourceValues = try fileURL.resourceValues(forKeys: [.isDirectoryKey])
-            if resourceValues.isDirectory != true {
+            let isDirectory = resourceValues.isDirectory == true
+
+            if !isDirectory {
                 let standardizedFile = fileURL.standardizedFileURL
                 var filePath = standardizedFile.path(percentEncoded: false)
 
@@ -179,11 +190,16 @@ private func scanDirectory(at path: String, recursive: Bool) async throws -> Set
                 }
 
                 // Remove base path to get relative path
+                let relativePath: String
                 if filePath.hasPrefix(standardizedBasePath + "/") {
-                    let relativePath = String(filePath.dropFirst(standardizedBasePath.count + 1))
-                    files.insert(relativePath)
+                    relativePath = String(filePath.dropFirst(standardizedBasePath.count + 1))
                 } else {
-                    files.insert(fileURL.lastPathComponent)
+                    relativePath = fileURL.lastPathComponent
+                }
+
+                // Check if file should be ignored
+                if !ignore.shouldIgnore(relativePath, isDirectory: false) {
+                    files.insert(relativePath)
                 }
             }
         }

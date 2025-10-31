@@ -10,6 +10,7 @@ A fast and efficient command-line tool for comparing and synchronizing directori
 - **Fast concurrent processing** - Uses Swift's modern concurrency for optimal performance
 - **Smart file comparison** - Quickly identifies identical, modified, and unique files
 - **Clear exit codes** - Easy integration with scripts and CI/CD pipelines
+- **Pattern-based file filtering** - Use .filesignore to exclude files from operations
 
 ### Directory Synchronization
 - **One-way sync** - Mirror source directory to destination
@@ -22,9 +23,76 @@ A fast and efficient command-line tool for comparing and synchronizing directori
 
 TBD
 
+## File Filtering with .filesignore
+
+Files supports `.filesignore` files to exclude certain files and directories from comparison and sync operations. This works similarly to `.gitignore`.
+
+### .filesignore File Locations
+
+The tool automatically looks for `.filesignore` files in three locations (in order):
+
+1. **User home directory**: `~/.filesignore` - Global patterns for all operations
+2. **Source/left directory**: `<source-dir>/.filesignore`
+3. **Destination/right directory**: `<dest-dir>/.filesignore`
+
+Patterns from all found files are merged together.
+
+### Pattern Syntax
+
+- `*` - Matches any characters except `/`
+- `?` - Matches a single character except `/`
+- `**` - Matches zero or more directories
+- `/` at start - Pattern is relative to directory root
+- `/` at end - Pattern matches directories only
+- `!` - Negates a pattern (includes files that were previously excluded)
+- `#` - Comment line
+- Empty lines are ignored
+
+### Example .filesignore
+
+```
+# Ignore build artifacts
+*.o
+*.class
+build/
+
+# Ignore dependencies
+node_modules/
+vendor/
+
+# Ignore version control
+.git/
+.svn/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore all log files
+*.log
+
+# But keep important.log
+!important.log
+
+# Ignore config.json only at root
+/config.json
+
+# Ignore all .txt files in build directory and subdirectories
+build/**/*.txt
+```
+
+### Disabling .filesignore
+
+You can disable `.filesignore` pattern matching with the `--no-ignore` flag:
+
+```bash
+files compare dir1 dir2 --no-ignore
+files sync source dest --no-ignore
+```
+
 ## Usage
 
-Files has two main commands: `compare` (default) and `sync`.
+Files has three main commands: `compare` (default), `sync`, and `cp`.
 
 ### Compare Command
 
@@ -41,6 +109,7 @@ files <left-directory> <right-directory> [options]
 - `--recursive` / `--no-recursive` - Scan subdirectories recursively (default: recursive)
 - `--verbose`, `-v` - Show detailed output with all file paths
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
+- `--no-ignore` - Disable .filesignore pattern matching
 - `--help`, `-h` - Show help message
 - `--version` - Show version information
 
@@ -49,6 +118,33 @@ files <left-directory> <right-directory> [options]
 - `0` - Directories are identical
 - `1` - Differences found
 - `2` - Error occurred (invalid directory, access denied, etc.)
+
+### Copy Command
+
+Copy new and modified files from source to destination (without deletions):
+
+```bash
+files cp <source-directory> <destination-directory> [options]
+```
+
+This is a convenience command equivalent to `files sync --no-deletions` with one-way mode. It's useful for updating a destination directory with new and changed files from source while preserving any extra files in the destination.
+
+#### Options
+
+- `--dry-run` - Preview changes without applying them
+- `--verbose`, `-v` - Show detailed output with all operations
+- `--format FORMAT` - Output format: `text` (default), `json`, `summary`
+- `--no-ignore` - Disable .filesignore pattern matching
+
+#### Example
+
+```bash
+# Preview what would be copied
+files cp /source /backup --dry-run --verbose
+
+# Copy new and modified files
+files cp /source /backup --verbose
+```
 
 ### Sync Command
 
@@ -67,6 +163,7 @@ files sync <source-directory> <destination-directory> [options]
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
+- `--no-ignore` - Disable .filesignore pattern matching
 
 #### Sync Modes
 

@@ -64,6 +64,7 @@ public enum DirectorySyncError: Error, Sendable {
 ///   - recursive: Whether to sync subdirectories recursively (default: true)
 ///   - deletions: Whether to delete files in destination that don't exist in source (default: false)
 ///   - dryRun: If true, only plan operations without executing them (default: false)
+///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
 /// - Returns: A `SyncResult` containing the operations performed and their results
 /// - Throws: `DirectorySyncError` if directories are invalid or operations fail
 public func directorySync(
@@ -72,24 +73,27 @@ public func directorySync(
     mode: SyncMode,
     recursive: Bool = true,
     deletions: Bool = false,
-    dryRun: Bool = false
+    dryRun: Bool = false,
+    ignore: Ignore? = nil
 ) async throws -> SyncResult {
     let diff: DirectoryDifference
     do {
         // Optimization: when doing one-way sync without deletions,
         // we don't need to know about files only in right
-        let includeOnlyInRight = switch mode {
+        let includeOnlyInRight =
+            switch mode {
             case .oneWay:
                 deletions
             case .twoWay:
                 true
-        }
+            }
 
         diff = try await directoryDifference(
             left: leftPath,
             right: rightPath,
             recursive: recursive,
-            includeOnlyInRight: includeOnlyInRight
+            includeOnlyInRight: includeOnlyInRight,
+            ignore: ignore
         )
     } catch let error as DirectoryDifferenceError {
         throw DirectorySyncError.from(error: error)
@@ -123,7 +127,8 @@ private func planSyncOperations(
 ) async throws -> [SyncOperation] {
     switch mode {
     case .oneWay:
-        return planOneWaySync(diff: diff, leftPath: leftPath, rightPath: rightPath, deletions: deletions)
+        return planOneWaySync(
+            diff: diff, leftPath: leftPath, rightPath: rightPath, deletions: deletions)
     case .twoWay(let conflictResolution):
         return try await planTwoWaySync(
             diff: diff,
@@ -141,13 +146,14 @@ private func createSyncOperation(
     leftBasePath: String?,
     rightBasePath: String
 ) -> SyncOperation {
-    let left: String? = if let leftBasePath {
-        URL(fileURLWithPath: leftBasePath)
-            .appendingPathComponent(relativePath)
-            .path(percentEncoded: false)
-    } else {
-        nil
-    }
+    let left: String? =
+        if let leftBasePath {
+            URL(fileURLWithPath: leftBasePath)
+                .appendingPathComponent(relativePath)
+                .path(percentEncoded: false)
+        } else {
+            nil
+        }
 
     let right = URL(fileURLWithPath: rightBasePath)
         .appendingPathComponent(relativePath)
@@ -179,14 +185,16 @@ private func planOneWaySync(
     }
 
     // Delete files only in right (only if deletions flag is true)
-    let deleteOps = deletions ? diff.onlyInRight.map {
-        createSyncOperation(
-            type: .delete,
-            relativePath: $0,
-            leftBasePath: nil,
-            rightBasePath: rightPath
-        )
-    } : []
+    let deleteOps =
+        deletions
+        ? diff.onlyInRight.map {
+            createSyncOperation(
+                type: .delete,
+                relativePath: $0,
+                leftBasePath: nil,
+                rightBasePath: rightPath
+            )
+        } : []
 
     // Update modified files
     let updateOps = diff.modified.map {

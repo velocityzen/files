@@ -51,6 +51,9 @@ extension Files {
         @Option(name: .long, help: "Output format: text (default), json")
         var format: OutputFormat = .text
 
+        @Flag(name: .long, help: "Disable .filesignore pattern matching")
+        var noIgnore: Bool = false
+
         mutating func run() async throws {
             do {
                 let syncMode: SyncMode =
@@ -69,7 +72,8 @@ extension Files {
                     mode: syncMode,
                     recursive: recursive,
                     deletions: deletions,
-                    dryRun: dryRun
+                    dryRun: dryRun,
+                    ignore: noIgnore ? Ignore() : nil
                 )
 
                 printSyncResults(result: result, format: format, verbose: verbose, dryRun: dryRun)

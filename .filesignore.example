@@ -1,0 +1,69 @@
+# .filesignore - Example file ignore patterns
+# Similar to .gitignore syntax
+#
+# Lines starting with # are comments
+# Blank lines are ignored
+#
+# Patterns:
+#   * matches any characters except /
+#   ? matches a single character except /
+#   ** matches zero or more directories
+#   / at start means pattern is relative to root
+#   / at end means pattern matches directories only
+#   ! negates a pattern (include files that were previously excluded)
+
+# Ignore common build artifacts
+*.o
+*.class
+*.pyc
+__pycache__/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Ignore dependencies
+node_modules/
+vendor/
+.bundle/
+
+# Ignore version control
+.git/
+.svn/
+.hg/
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Ignore logs
+*.log
+logs/
+
+# Ignore temporary files
+*.tmp
+*.temp
+.cache/
+
+# Example: Ignore all .txt files in build directory and subdirectories
+build/**/*.txt
+
+# Example: But include important.txt even if it's a .txt file
+!important.txt
+
+# Example: Ignore config.json only at root level
+/config.json
+
+# Example: Ignore all hidden files
+.*
+
+# Example: But don't ignore .filesignore itself
+!.filesignore
