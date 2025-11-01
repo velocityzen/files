@@ -21,18 +21,27 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "FilesKit"
+            name: "FilesKit",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
         ),
         .executableTarget(
             name: "files",
             dependencies: [
                 "FilesKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
             ]
         ),
         .testTarget(
             name: "FilesTests",
-            dependencies: ["FilesKit"]
+            dependencies: ["FilesKit"],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
         ),
     ]
 )
