@@ -8,14 +8,13 @@ struct Files: AsyncParsableCommand {
         commandName: "files",
         abstract: "Files Toolbox",
         discussion: """
-            A tool for comparing and synchronizing directories with support for:
             - Directory comparison and difference reporting
             - One-way and two-way directory synchronization
             - Copy new and modified files without deletion
             - Conflict resolution strategies
             - Dry-run mode for previewing changes
             """,
-        version: "1.1.0",
+        version: "1.2.0",
         subcommands: [
             CompareCommand.self,
             SyncCommand.self,
