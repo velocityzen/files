@@ -724,4 +724,73 @@ struct DirectorySyncTests {
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("empty.txt")))
         #expect(try TestHelpers.readFile(at: rightDir.appendingPathComponent("empty.txt")) == "")
     }
+
+    @Test(".filesignore is not copied during sync")
+    func filesignoreNotCopied() async throws {
+        let leftFiles = [
+            ".filesignore": "*.log\n*.tmp",
+            "data.txt": "important data",
+            "config.json": "{}",
+        ]
+        let rightFiles: [String: String] = [:]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let result = try await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            mode: .oneWay
+        )
+
+        // Should copy 2 files (data.txt and config.json), but NOT .filesignore
+        #expect(result.succeeded == 2)
+        #expect(result.operations.count == 2)
+
+        // Verify .filesignore was NOT copied
+        let filesignorePath = rightDir.appendingPathComponent(".filesignore")
+        #expect(!TestHelpers.fileExists(at: filesignorePath))
+
+        // Verify other files were copied
+        #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("data.txt")))
+        #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("config.json")))
+    }
+
+    @Test(".filesignore can be explicitly included with negation pattern")
+    func filesignoreCanBeIncludedExplicitly() async throws {
+        let leftFiles = [
+            ".filesignore": "*.log\n!.filesignore",
+            "data.txt": "important data",
+        ]
+        let rightFiles: [String: String] = [:]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let result = try await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            mode: .oneWay
+        )
+
+        // With !.filesignore in the patterns, it should be included
+        // Should copy both files
+        #expect(result.succeeded == 2)
+        #expect(result.operations.count == 2)
+
+        // Verify .filesignore WAS copied this time
+        let filesignorePath = rightDir.appendingPathComponent(".filesignore")
+        #expect(TestHelpers.fileExists(at: filesignorePath))
+        #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("data.txt")))
+    }
 }

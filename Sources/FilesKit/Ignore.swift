@@ -135,7 +135,10 @@ public struct Ignore: Sendable {
 
     /// Creates an Ignore instance from an array of pattern strings
     public init(patterns: [String]) {
-        self.patterns = patterns.compactMap { Pattern(line: $0) }
+        // Always include default patterns to ignore .filesignore files
+        let defaultPatterns = [".filesignore"]
+        let allPatterns = defaultPatterns + patterns
+        self.patterns = allPatterns.compactMap { Pattern(line: $0) }
     }
 
     /// Loads ignore patterns from .filesignore files

@@ -48,6 +48,16 @@ Patterns from all found files are merged together.
 - `#` - Comment line
 - Empty lines are ignored
 
+### Default Ignored Files
+
+By default, `.filesignore` files themselves are always ignored and will not be copied during sync operations. This prevents the ignore configuration from being propagated to destination directories.
+
+To explicitly include `.filesignore` in sync operations, add a negation pattern:
+
+```
+!.filesignore
+```
+
 ### Example .filesignore
 
 ```
