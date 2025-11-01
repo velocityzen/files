@@ -63,7 +63,7 @@ enum OutputFormatter {
 
         if !copies.isEmpty {
             printOperationList(
-                "Copy", verb: dryRun ? "would copy" : "copied", operations: copies,
+                "Copy", prefix: " +", operations: copies,
                 verbose: verbose
             )
             print()
@@ -71,14 +71,14 @@ enum OutputFormatter {
 
         if !updates.isEmpty {
             printOperationList(
-                "Update", verb: dryRun ? "would update" : "updated", operations: updates,
+                "Update", prefix: " ^", operations: updates,
                 verbose: verbose)
             print()
         }
 
         if !deletes.isEmpty {
             printOperationList(
-                "Delete", verb: dryRun ? "would delete" : "deleted", operations: deletes,
+                "Delete", prefix: " -", operations: deletes,
                 verbose: verbose)
             print()
         }
@@ -91,12 +91,12 @@ enum OutputFormatter {
     }
 
     static func printOperationList(
-        _ title: String, verb: String, operations: [SyncOperation], verbose: Bool
+        _ title: String, prefix: String, operations: [SyncOperation], verbose: Bool
     ) {
         print("\(title) (\(operations.count)):")
         if verbose {
             for op in operations.sorted(by: { $0.relativePath < $1.relativePath }) {
-                print("  \(verb) \(op.relativePath)")
+                print("\(prefix) \(op.relativePath)")
             }
         } else {
             print("  Use --verbose to see file list")
@@ -177,7 +177,7 @@ enum OutputFormatter {
         print()
         printFileList("Only in RIGHT", prefix: " +", files: diff.onlyInRight, verbose: verbose)
         print()
-        printFileList("Modified", prefix: " ~", files: diff.modified, verbose: verbose)
+        printFileList("Modified", prefix: " ^", files: diff.modified, verbose: verbose)
         print()
         printFileList("Unchanged", prefix: " ~", files: diff.common, verbose: verbose)
         print()
@@ -196,7 +196,7 @@ enum OutputFormatter {
         print("\(message): (\(files.count)):")
         if verbose {
             for file in files.sorted() {
-                print("\(prefix)\(file)")
+                print("\(prefix) \(file)")
             }
         } else {
             print("  Use --verbose to see file list")

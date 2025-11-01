@@ -97,7 +97,7 @@ extension Files {
 
             if !copies.isEmpty {
                 OutputFormatter.printOperationList(
-                    "New files", verb: dryRun ? "would copy" : "copied", operations: copies,
+                    "New files", prefix: " +", operations: copies,
                     verbose: verbose
                 )
                 print()
@@ -105,7 +105,7 @@ extension Files {
 
             if !updates.isEmpty {
                 OutputFormatter.printOperationList(
-                    "Modified files", verb: dryRun ? "would update" : "updated",
+                    "Modified files", prefix: " ^",
                     operations: updates,
                     verbose: verbose)
                 print()

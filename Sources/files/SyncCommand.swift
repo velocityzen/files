@@ -116,7 +116,7 @@ extension Files {
 
             if !copies.isEmpty {
                 OutputFormatter.printOperationList(
-                    "Copy", verb: dryRun ? "would copy" : "copied", operations: copies,
+                    "Copy", prefix: " +", operations: copies,
                     verbose: verbose
                 )
                 print()
@@ -124,14 +124,14 @@ extension Files {
 
             if !updates.isEmpty {
                 OutputFormatter.printOperationList(
-                    "Update", verb: dryRun ? "would update" : "updated", operations: updates,
+                    "Update", prefix: " ^", operations: updates,
                     verbose: verbose)
                 print()
             }
 
             if !deletes.isEmpty {
                 OutputFormatter.printOperationList(
-                    "Delete", verb: dryRun ? "would delete" : "deleted", operations: deletes,
+                    "Delete", prefix: " -", operations: deletes,
                     verbose: verbose)
                 print()
             }
