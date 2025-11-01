@@ -507,7 +507,7 @@ private func executeSyncOperation(
 }
 
 /// Copies a file with progress reporting
-private func copyFileWithProgress(
+internal func copyFileWithProgress(
     from source: String,
     to destination: String,
     fileSize: Int64,
