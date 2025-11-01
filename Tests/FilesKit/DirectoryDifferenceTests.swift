@@ -500,3 +500,249 @@ struct DirectoryDifferenceTests {
         #expect(diff.modified.isEmpty)
     }
 }
+
+// MARK: - JSON Comparison Tests
+
+@Suite("JSON Comparison")
+struct JSONComparisonTests {
+
+    @Test("Identical JSON comparison results")
+    func identicalJSONResults() async throws {
+        let comparisonResult = DirectoryDifference(
+            onlyInLeft: ["file1.txt", "file2.txt"],
+            onlyInRight: ["file3.txt"],
+            common: ["file5.txt", "file6.txt"],
+            modified: ["file4.txt"]
+        )
+
+        let (leftFile, rightFile) = try TestHelpers.createJSONComparisonFiles(
+            left: comparisonResult,
+            right: comparisonResult
+        )
+
+        defer {
+            try? FileManager.default.removeItem(atPath: leftFile)
+            try? FileManager.default.removeItem(atPath: rightFile)
+        }
+
+        let diff = try await compareSnapshots(left: leftFile, right: rightFile)
+
+        #expect(diff.onlyInLeft.isEmpty)
+        #expect(diff.onlyInRight.isEmpty)
+        #expect(diff.modified.isEmpty)
+        #expect(diff.common.count == 6)  // All files should have same status
+        #expect(!diff.hasDifferences)
+    }
+
+    @Test("Files added to comparison")
+    func filesAddedToComparison() async throws {
+        let leftResult = DirectoryDifference(
+            onlyInLeft: ["file1.txt"],
+            onlyInRight: ["file2.txt"],
+            common: ["file3.txt"],
+            modified: []
+        )
+
+        let rightResult = DirectoryDifference(
+            onlyInLeft: ["file1.txt"],
+            onlyInRight: ["file2.txt"],
+            common: ["file3.txt", "file4.txt"],  // file4.txt added
+            modified: []
+        )
+
+        let (leftFile, rightFile) = try TestHelpers.createJSONComparisonFiles(
+            left: leftResult,
+            right: rightResult
+        )
+
+        defer {
+            try? FileManager.default.removeItem(atPath: leftFile)
+            try? FileManager.default.removeItem(atPath: rightFile)
+        }
+
+        let diff = try await compareSnapshots(left: leftFile, right: rightFile)
+
+        #expect(diff.onlyInRight.contains("file4.txt"))
+        #expect(diff.hasDifferences)
+    }
+
+    @Test("Files removed from comparison")
+    func filesRemovedFromComparison() async throws {
+        let leftResult = DirectoryDifference(
+            onlyInLeft: ["file1.txt"],
+            onlyInRight: ["file2.txt"],
+            common: ["file4.txt"],
+            modified: ["file3.txt"]
+        )
+
+        let rightResult = DirectoryDifference(
+            onlyInLeft: ["file1.txt"],
+            onlyInRight: ["file2.txt"],
+            common: [],  // file4.txt removed
+            modified: []  // file3.txt removed
+        )
+
+        let (leftFile, rightFile) = try TestHelpers.createJSONComparisonFiles(
+            left: leftResult,
+            right: rightResult
+        )
+
+        defer {
+            try? FileManager.default.removeItem(atPath: leftFile)
+            try? FileManager.default.removeItem(atPath: rightFile)
+        }
+
+        let diff = try await compareSnapshots(left: leftFile, right: rightFile)
+
+        #expect(diff.onlyInLeft.contains("file3.txt"))
+        #expect(diff.onlyInLeft.contains("file4.txt"))
+        #expect(diff.hasDifferences)
+    }
+
+    @Test("File status changed between comparisons")
+    func fileStatusChanged() async throws {
+        let leftResult = DirectoryDifference(
+            onlyInLeft: [],
+            onlyInRight: [],
+            common: ["file2.txt"],  // file2 was common
+            modified: ["file1.txt"]  // file1 was modified
+        )
+
+        let rightResult = DirectoryDifference(
+            onlyInLeft: [],
+            onlyInRight: [],
+            common: ["file1.txt", "file2.txt"],  // file1 now common
+            modified: []
+        )
+
+        let (leftFile, rightFile) = try TestHelpers.createJSONComparisonFiles(
+            left: leftResult,
+            right: rightResult
+        )
+
+        defer {
+            try? FileManager.default.removeItem(atPath: leftFile)
+            try? FileManager.default.removeItem(atPath: rightFile)
+        }
+
+        let diff = try await compareSnapshots(left: leftFile, right: rightFile)
+
+        #expect(diff.modified.contains("file1.txt"))  // Status changed
+        #expect(diff.common.contains("file2.txt"))  // Status unchanged
+        #expect(diff.hasDifferences)
+    }
+
+    @Test("Multiple status changes")
+    func multipleStatusChanges() async throws {
+        let leftResult = DirectoryDifference(
+            onlyInLeft: ["file1.txt"],
+            onlyInRight: [],
+            common: ["file3.txt"],
+            modified: ["file2.txt"]
+        )
+
+        let rightResult = DirectoryDifference(
+            onlyInLeft: [],
+            onlyInRight: ["file1.txt"],  // file1 moved from left to right
+            common: ["file2.txt"],  // file2 became common
+            modified: ["file3.txt"]  // file3 became modified
+        )
+
+        let (leftFile, rightFile) = try TestHelpers.createJSONComparisonFiles(
+            left: leftResult,
+            right: rightResult
+        )
+
+        defer {
+            try? FileManager.default.removeItem(atPath: leftFile)
+            try? FileManager.default.removeItem(atPath: rightFile)
+        }
+
+        let diff = try await compareSnapshots(left: leftFile, right: rightFile)
+
+        #expect(diff.modified.contains("file1.txt"))
+        #expect(diff.modified.contains("file2.txt"))
+        #expect(diff.modified.contains("file3.txt"))
+        #expect(diff.hasDifferences)
+    }
+
+    @Test("Invalid JSON file throws error")
+    func invalidJSONFile() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+        let invalidFile = tempDir.appendingPathComponent(UUID().uuidString + ".json")
+        let validResult = DirectoryDifference(
+            onlyInLeft: [],
+            onlyInRight: [],
+            common: [],
+            modified: []
+        )
+
+        // Create invalid JSON
+        try "{ invalid json }".write(to: invalidFile, atomically: true, encoding: .utf8)
+
+        let validFile = try TestHelpers.createJSONFile(diff: validResult)
+
+        defer {
+            try? FileManager.default.removeItem(at: invalidFile)
+            try? FileManager.default.removeItem(atPath: validFile)
+        }
+
+        await #expect(throws: DirectoryDifferenceError.self) {
+            _ = try await compareSnapshots(
+                left: invalidFile.path(percentEncoded: false),
+                right: validFile
+            )
+        }
+    }
+
+    @Test("Nonexistent JSON file throws error")
+    func nonexistentJSONFile() async throws {
+        let validResult = DirectoryDifference(
+            onlyInLeft: [],
+            onlyInRight: [],
+            common: [],
+            modified: []
+        )
+
+        let validFile = try TestHelpers.createJSONFile(diff: validResult)
+
+        defer {
+            try? FileManager.default.removeItem(atPath: validFile)
+        }
+
+        await #expect(throws: DirectoryDifferenceError.self) {
+            _ = try await compareSnapshots(
+                left: "/nonexistent/file.json",
+                right: validFile
+            )
+        }
+    }
+
+    @Test("Empty comparison results")
+    func emptyComparisonResults() async throws {
+        let emptyResult = DirectoryDifference(
+            onlyInLeft: [],
+            onlyInRight: [],
+            common: [],
+            modified: []
+        )
+
+        let (leftFile, rightFile) = try TestHelpers.createJSONComparisonFiles(
+            left: emptyResult,
+            right: emptyResult
+        )
+
+        defer {
+            try? FileManager.default.removeItem(atPath: leftFile)
+            try? FileManager.default.removeItem(atPath: rightFile)
+        }
+
+        let diff = try await compareSnapshots(left: leftFile, right: rightFile)
+
+        #expect(diff.onlyInLeft.isEmpty)
+        #expect(diff.onlyInRight.isEmpty)
+        #expect(diff.modified.isEmpty)
+        #expect(diff.common.isEmpty)
+        #expect(!diff.hasDifferences)
+    }
+}

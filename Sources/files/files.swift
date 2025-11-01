@@ -9,6 +9,7 @@ struct Files: AsyncParsableCommand {
         abstract: "Files Toolbox",
         discussion: """
             - Directory comparison and difference reporting
+            - Snapshot comparison
             - One-way and two-way directory synchronization
             - Copy new and modified files without deletion
             - Conflict resolution strategies
@@ -17,6 +18,7 @@ struct Files: AsyncParsableCommand {
         version: "1.2.0",
         subcommands: [
             CompareCommand.self,
+            CompareSnapshotCommand.self,
             SyncCommand.self,
             CopyCommand.self,
         ],

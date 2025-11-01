@@ -1,7 +1,7 @@
 import Foundation
 
 /// Represents the differences between two directories
-public struct DirectoryDifference: Sendable {
+public struct DirectoryDifference: Sendable, Codable {
     public let onlyInLeft: Set<String>
     public let onlyInRight: Set<String>
     public let common: Set<String>
@@ -12,6 +12,68 @@ public struct DirectoryDifference: Sendable {
     /// Returns true if there are any differences between the directories
     public var hasDifferences: Bool {
         !onlyInLeft.isEmpty || !onlyInRight.isEmpty || !modified.isEmpty
+    }
+
+    // Custom coding keys to maintain JSON compatibility
+    private enum CodingKeys: String, CodingKey {
+        case onlyInLeft, onlyInRight, common, modified, summary
+    }
+
+    // Helper struct for JSON encoding/decoding summary
+    private struct Summary: Codable {
+        let onlyInLeftCount: Int
+        let onlyInRightCount: Int
+        let modifiedCount: Int
+        let commonCount: Int
+        let identical: Bool
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Decode arrays and convert to sets
+        let leftArray = try container.decode([String].self, forKey: .onlyInLeft)
+        let rightArray = try container.decode([String].self, forKey: .onlyInRight)
+        let commonArray = try container.decode([String].self, forKey: .common)
+        let modifiedArray = try container.decode([String].self, forKey: .modified)
+
+        self.onlyInLeft = Set(leftArray)
+        self.onlyInRight = Set(rightArray)
+        self.common = Set(commonArray)
+        self.modified = Set(modifiedArray)
+
+        // Summary is optional and we don't need to store it
+        _ = try? container.decodeIfPresent(Summary.self, forKey: .summary)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        // Encode sets as sorted arrays
+        try container.encode(Array(onlyInLeft).sorted(), forKey: .onlyInLeft)
+        try container.encode(Array(onlyInRight).sorted(), forKey: .onlyInRight)
+        try container.encode(Array(common).sorted(), forKey: .common)
+        try container.encode(Array(modified).sorted(), forKey: .modified)
+
+        // Add summary for better readability
+        let summary = Summary(
+            onlyInLeftCount: onlyInLeft.count,
+            onlyInRightCount: onlyInRight.count,
+            modifiedCount: modified.count,
+            commonCount: common.count,
+            identical: !hasDifferences
+        )
+        try container.encode(summary, forKey: .summary)
+    }
+
+    public init(
+        onlyInLeft: Set<String>, onlyInRight: Set<String>, common: Set<String>,
+        modified: Set<String>
+    ) {
+        self.onlyInLeft = onlyInLeft
+        self.onlyInRight = onlyInRight
+        self.common = common
+        self.modified = modified
     }
 }
 
@@ -271,4 +333,112 @@ private func filesAreDifferent(_ path1: String, _ path2: String) async throws ->
 
         return data1 != data2
     }.value
+}
+
+// MARK: - JSON Comparison
+
+/// Compares two JSON comparison result files and returns their differences
+/// - Parameters:
+///   - leftPath: Path to the left JSON file
+///   - rightPath: Path to the right JSON file
+/// - Returns: A `DirectoryDifference` representing the differences between the two comparison results
+/// - Throws: `DirectoryDifferenceError` if files are invalid or inaccessible
+public func compareSnapshots(
+    left leftPath: String,
+    right rightPath: String
+) async throws -> DirectoryDifference {
+    // Load both JSON files concurrently
+    async let leftDiff = try loadJSONFile(at: leftPath)
+    async let rightDiff = try loadJSONFile(at: rightPath)
+
+    // Wait for both to complete and compare
+    return try await compareDirectoryDifferences(left: leftDiff, right: rightDiff)
+}
+
+/// Loads and decodes a JSON file into a DirectoryDifference
+/// - Parameter path: Path to the JSON file
+/// - Returns: A decoded `DirectoryDifference`
+/// - Throws: `DirectoryDifferenceError` if file is invalid or inaccessible
+@concurrent
+private func loadJSONFile(at path: String) async throws -> DirectoryDifference {
+    try await Task.detached {
+        let fileManager = FileManager.default
+
+        // Validate that file exists
+        guard fileManager.fileExists(atPath: path) else {
+            throw DirectoryDifferenceError.invalidDirectory(path)
+        }
+
+        // Read file
+        guard let data = fileManager.contents(atPath: path) else {
+            throw DirectoryDifferenceError.accessDenied("Could not read \(path)")
+        }
+
+        // Decode JSON
+        let decoder = JSONDecoder()
+        do {
+            return try decoder.decode(DirectoryDifference.self, from: data)
+        } catch {
+            throw DirectoryDifferenceError.accessDenied(
+                "Could not decode JSON from \(path): \(error)")
+        }
+    }.value
+}
+
+/// Compares two DirectoryDifference structures to find meta-differences
+/// This shows what files changed status between two comparison snapshots
+private func compareDirectoryDifferences(
+    left: DirectoryDifference,
+    right: DirectoryDifference
+) -> DirectoryDifference {
+    // Collect all files from both comparisons
+    let leftAllFiles = left.onlyInLeft.union(left.onlyInRight).union(left.common).union(
+        left.modified)
+    let rightAllFiles = right.onlyInLeft.union(right.onlyInRight).union(right.common).union(
+        right.modified)
+
+    // Files that exist in left comparison but not in right
+    let onlyInLeft = leftAllFiles.subtracting(rightAllFiles)
+
+    // Files that exist in right comparison but not in left
+    let onlyInRight = rightAllFiles.subtracting(leftAllFiles)
+
+    // Files in both comparisons
+    let commonFiles = leftAllFiles.intersection(rightAllFiles)
+
+    // Find files that changed status between comparisons
+    var modified = Set<String>()
+    var unchanged = Set<String>()
+
+    for file in commonFiles {
+        let leftStatus = getFileStatus(in: left, file: file)
+        let rightStatus = getFileStatus(in: right, file: file)
+
+        if leftStatus != rightStatus {
+            modified.insert(file)
+        } else {
+            unchanged.insert(file)
+        }
+    }
+
+    return DirectoryDifference(
+        onlyInLeft: onlyInLeft,
+        onlyInRight: onlyInRight,
+        common: unchanged,
+        modified: modified
+    )
+}
+
+/// Helper to determine the status of a file in a DirectoryDifference
+private func getFileStatus(in diff: DirectoryDifference, file: String) -> String {
+    if diff.onlyInLeft.contains(file) {
+        return "onlyInLeft"
+    } else if diff.onlyInRight.contains(file) {
+        return "onlyInRight"
+    } else if diff.modified.contains(file) {
+        return "modified"
+    } else if diff.common.contains(file) {
+        return "common"
+    }
+    return "unknown"
 }

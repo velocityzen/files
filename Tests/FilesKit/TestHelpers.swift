@@ -1,4 +1,5 @@
 import Foundation
+@testable import FilesKit
 
 /// Shared test helpers for FilesKit tests
 enum TestHelpers {
@@ -71,5 +72,35 @@ enum TestHelpers {
         let attrs = try FileManager.default.attributesOfItem(
             atPath: url.path(percentEncoded: false))
         return attrs[.modificationDate] as! Date
+    }
+
+    /// Creates a JSON file from a DirectoryDifference
+    /// - Parameter diff: The DirectoryDifference to serialize
+    /// - Returns: Path to the created JSON file
+    static func createJSONFile(diff: DirectoryDifference) throws -> String {
+        let tempDir = FileManager.default.temporaryDirectory
+        let jsonFile = tempDir.appendingPathComponent(UUID().uuidString + ".json")
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        let jsonData = try encoder.encode(diff)
+
+        try jsonData.write(to: jsonFile)
+
+        return jsonFile.path(percentEncoded: false)
+    }
+
+    /// Creates two JSON comparison files for testing
+    /// - Parameters:
+    ///   - left: Left DirectoryDifference
+    ///   - right: Right DirectoryDifference
+    /// - Returns: Tuple of (leftFilePath, rightFilePath)
+    static func createJSONComparisonFiles(
+        left: DirectoryDifference,
+        right: DirectoryDifference
+    ) throws -> (String, String) {
+        let leftFile = try createJSONFile(diff: left)
+        let rightFile = try createJSONFile(diff: right)
+        return (leftFile, rightFile)
     }
 }
