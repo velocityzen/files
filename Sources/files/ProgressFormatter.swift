@@ -16,7 +16,7 @@ actor ProgressFormatter {
 
             // Print the completed file(s)
             if let operation = lastOperation {
-                print(" + \(operation.relativePath)")
+                OutputFormatter.printOperation(operation)
             }
             lastCompletedCount = progress.completedOperations
         }

@@ -62,24 +62,17 @@ enum OutputFormatter {
         let deletes = result.operations.filter { $0.type == .delete }
 
         if !copies.isEmpty {
-            printOperationList(
-                "Copy", prefix: " +", operations: copies,
-                verbose: verbose
-            )
+            printOperationList("Copy", operations: copies, verbose: verbose)
             print()
         }
 
         if !updates.isEmpty {
-            printOperationList(
-                "Update", prefix: " ^", operations: updates,
-                verbose: verbose)
+            printOperationList("Update", operations: updates, verbose: verbose)
             print()
         }
 
         if !deletes.isEmpty {
-            printOperationList(
-                "Delete", prefix: " -", operations: deletes,
-                verbose: verbose)
+            printOperationList("Delete", operations: deletes, verbose: verbose)
             print()
         }
 
@@ -91,16 +84,28 @@ enum OutputFormatter {
     }
 
     static func printOperationList(
-        _ title: String, prefix: String, operations: [SyncOperation], verbose: Bool
+        _ title: String, operations: [SyncOperation], verbose: Bool
     ) {
-        print("\(title) (\(operations.count)):")
+        print("\(title) (\(operations.count))")
         if verbose {
-            for op in operations.sorted(by: { $0.relativePath < $1.relativePath }) {
-                print("\(prefix) \(op.relativePath)")
+            for operation in operations {
+                printOperation(operation)
             }
-        } else {
-            print("  Use --verbose to see file list")
         }
+    }
+
+    static func printOperation(_ operation: SyncOperation) {
+        let prefix =
+            switch operation.type {
+            case .copy:
+                " +"
+            case .delete:
+                " -"
+            case .update:
+                " ^"
+            }
+
+        print("\(prefix) \(operation.relativePath)")
     }
 
     private static func printSyncJSONFormat(result: SyncResult) {

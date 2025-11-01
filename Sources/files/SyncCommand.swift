@@ -137,7 +137,7 @@ extension Files {
 
             if !copies.isEmpty {
                 OutputFormatter.printOperationList(
-                    "Copy", prefix: " +", operations: copies,
+                    "Copy", operations: copies,
                     verbose: verbose
                 )
                 print()
@@ -145,14 +145,14 @@ extension Files {
 
             if !updates.isEmpty {
                 OutputFormatter.printOperationList(
-                    "Update", prefix: " ^", operations: updates,
+                    "Update", operations: updates,
                     verbose: verbose)
                 print()
             }
 
             if !deletes.isEmpty {
                 OutputFormatter.printOperationList(
-                    "Delete", prefix: " -", operations: deletes,
+                    "Delete", operations: deletes,
                     verbose: verbose)
                 print()
             }

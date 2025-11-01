@@ -118,7 +118,8 @@ extension Files {
 
             if !copies.isEmpty {
                 OutputFormatter.printOperationList(
-                    "New files", prefix: " +", operations: copies,
+                    "New files",
+                    operations: copies,
                     verbose: verbose
                 )
                 print()
@@ -126,7 +127,7 @@ extension Files {
 
             if !updates.isEmpty {
                 OutputFormatter.printOperationList(
-                    "Modified files", prefix: " ^",
+                    "Modified files",
                     operations: updates,
                     verbose: verbose)
                 print()
