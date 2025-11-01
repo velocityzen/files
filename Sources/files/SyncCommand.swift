@@ -66,6 +66,21 @@ extension Files {
                     print()
                 }
 
+                // Setup progress display for text format
+                let progressDisplay: ProgressFormatter? =
+                    (format == .text && !dryRun) ? ProgressFormatter() : nil
+
+                let progressHandler: ProgressHandler? =
+                    if let display = progressDisplay {
+                        { progress in
+                            Task {
+                                await display.display(progress)
+                            }
+                        }
+                    } else {
+                        nil
+                    }
+
                 let result = try await directorySync(
                     left: sourcePath,
                     right: destinationPath,
@@ -73,8 +88,14 @@ extension Files {
                     recursive: recursive,
                     deletions: deletions,
                     dryRun: dryRun,
-                    ignore: noIgnore ? Ignore() : nil
+                    ignore: noIgnore ? Ignore() : nil,
+                    progress: progressHandler
                 )
+
+                // Complete progress display
+                if let display = progressDisplay {
+                    await display.complete()
+                }
 
                 printSyncResults(result: result, format: format, verbose: verbose, dryRun: dryRun)
 

@@ -1,5 +1,8 @@
 import Foundation
 
+let COPY_CHUNK_SIZE = 1024 * 1024
+let MIN_SIZE_TO_CHUNK = COPY_CHUNK_SIZE * 10
+
 /// Represents a sync operation to be performed
 public struct SyncOperation: Sendable {
     public enum OperationType: Sendable {
@@ -65,6 +68,7 @@ public enum DirectorySyncError: Error, Sendable {
 ///   - deletions: Whether to delete files in destination that don't exist in source (default: false)
 ///   - dryRun: If true, only plan operations without executing them (default: false)
 ///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
+///   - progress: Optional progress callback to receive real-time updates (default: nil)
 /// - Returns: A `SyncResult` containing the operations performed and their results
 /// - Throws: `DirectorySyncError` if directories are invalid or operations fail
 public func directorySync(
@@ -74,7 +78,8 @@ public func directorySync(
     recursive: Bool = true,
     deletions: Bool = false,
     dryRun: Bool = false,
-    ignore: Ignore? = nil
+    ignore: Ignore? = nil,
+    progress: ProgressHandler? = nil
 ) async throws -> SyncResult {
     let diff: DirectoryDifference
     do {
@@ -113,7 +118,7 @@ public func directorySync(
         return SyncResult(
             operations: operations, succeeded: 0, failed: 0, skipped: operations.count)
     } else {
-        return try await executeSyncOperations(operations)
+        return try await executeSyncOperations(operations, progress: progress)
     }
 }
 
@@ -206,7 +211,7 @@ private func planOneWaySync(
         )
     }
 
-    return copyOps + deleteOps + updateOps
+    return (copyOps + deleteOps + updateOps).sorted { $0.relativePath < $1.relativePath }
 }
 
 /// Plans two-way sync operations with conflict resolution
@@ -253,7 +258,9 @@ private func planTwoWaySync(
         )
     }
 
-    return leftToRightOps + rightToLeftOps + conflictOps
+    return (leftToRightOps + rightToLeftOps + conflictOps).sorted {
+        $0.relativePath < $1.relativePath
+    }
 }
 
 /// Resolves a conflict between two modified files
@@ -319,16 +326,82 @@ private func resolveConflict(
     }
 }
 
+/// Tracks progress state for sync operations
+private actor ProgressTracker {
+    private(set) var totalBytesTransferred: Int64 = 0
+    private let startTime = Date()
+
+    func addBytes(_ bytes: Int64) {
+        totalBytesTransferred += bytes
+    }
+
+    func calculateSpeed() -> Double {
+        let elapsed = Date().timeIntervalSince(startTime)
+        return elapsed > 0 ? Double(totalBytesTransferred) / elapsed : 0
+    }
+
+    func calculateSpeed(adding bytes: Int64) -> Double {
+        let elapsed = Date().timeIntervalSince(startTime)
+        return elapsed > 0 ? Double(totalBytesTransferred + bytes) / elapsed : 0
+    }
+}
+
 /// Executes a list of sync operations
-private func executeSyncOperations(_ operations: [SyncOperation]) async throws -> SyncResult {
+private func executeSyncOperations(
+    _ operations: [SyncOperation],
+    progress: ProgressHandler? = nil
+) async throws -> SyncResult {
     var succeeded = 0
     var failed = 0
     let skipped = 0
 
-    for operation in operations {
+    // Calculate total bytes if progress tracking is enabled
+    let totalBytes = await calculateTotalBytes(operations)
+    let tracker = ProgressTracker()
+
+    for (index, operation) in operations.enumerated() {
         do {
-            try await executeSyncOperation(operation)
+            // Get file size before executing operation
+            let fileSize = getOperationSize(operation)
+
+            let actualSize = try await executeSyncOperation(operation) { currentBytes in
+                Task {
+                    // Report progress during file transfer
+                    let bytesPerSecond = await tracker.calculateSpeed(adding: currentBytes)
+                    let totalTransferred = await tracker.totalBytesTransferred
+
+                    progress?(
+                        SyncProgress(
+                            currentOperation: operation,
+                            completedOperations: index,
+                            totalOperations: operations.count,
+                            currentFileBytes: currentBytes,
+                            currentFileTotalBytes: fileSize,
+                            totalBytesTransferred: totalTransferred + currentBytes,
+                            totalBytes: totalBytes,
+                            bytesPerSecond: bytesPerSecond
+                        ))
+                }
+            }
+
+            await tracker.addBytes(actualSize)
             succeeded += 1
+
+            // Report completion of this operation
+            let bytesPerSecond = await tracker.calculateSpeed()
+            let totalTransferred = await tracker.totalBytesTransferred
+
+            progress?(
+                SyncProgress(
+                    currentOperation: nil,
+                    completedOperations: index + 1,
+                    totalOperations: operations.count,
+                    currentFileBytes: 0,
+                    currentFileTotalBytes: 0,
+                    totalBytesTransferred: totalTransferred,
+                    totalBytes: totalBytes,
+                    bytesPerSecond: bytesPerSecond
+                ))
         } catch {
             failed += 1
         }
@@ -342,9 +415,45 @@ private func executeSyncOperations(_ operations: [SyncOperation]) async throws -
     )
 }
 
+/// Gets the size of a single operation
+private func getOperationSize(_ operation: SyncOperation) -> Int64 {
+    guard let sourcePath = operation.left else { return 0 }
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: sourcePath) else {
+        return 0
+    }
+    return (attrs[.size] as? Int64) ?? 0
+}
+
+/// Calculates total bytes to transfer for all operations
+private func calculateTotalBytes(_ operations: [SyncOperation]) async -> Int64 {
+    await withTaskGroup(of: Int64.self) { group in
+        for operation in operations {
+            group.addTask {
+                guard let sourcePath = operation.left else { return 0 }
+                guard let attrs = try? FileManager.default.attributesOfItem(atPath: sourcePath)
+                else { return 0 }
+                return (attrs[.size] as? Int64) ?? 0
+            }
+        }
+
+        var total: Int64 = 0
+        for await size in group {
+            total += size
+        }
+        return total
+    }
+}
+
 /// Executes a single sync operation
+/// - Parameters:
+///   - operation: The operation to execute
+///   - progressCallback: Optional callback to report progress during file transfer
+/// - Returns: Size of the file in bytes (0 for deletions)
 @concurrent
-private func executeSyncOperation(_ operation: SyncOperation) async throws {
+private func executeSyncOperation(
+    _ operation: SyncOperation,
+    progressCallback: (@Sendable (Int64) -> Void)? = nil
+) async throws -> Int64 {
     try await Task.detached {
         let fileManager = FileManager.default
 
@@ -353,6 +462,10 @@ private func executeSyncOperation(_ operation: SyncOperation) async throws {
             guard let left = operation.left else {
                 throw DirectorySyncError.operationFailed("No left for copy/update operation")
             }
+
+            // Get file size
+            let attrs = try fileManager.attributesOfItem(atPath: left)
+            let fileSize = (attrs[.size] as? Int64) ?? 0
 
             // Create right directory if needed
             let rightURL = URL(fileURLWithPath: operation.right)
@@ -367,13 +480,76 @@ private func executeSyncOperation(_ operation: SyncOperation) async throws {
             if fileManager.fileExists(atPath: operation.right) {
                 try fileManager.removeItem(atPath: operation.right)
             }
-            try fileManager.copyItem(atPath: left, toPath: operation.right)
+
+            // For small files or when no progress callback, use simple copy
+            if fileSize < MIN_SIZE_TO_CHUNK || progressCallback == nil {
+                try fileManager.copyItem(atPath: left, toPath: operation.right)
+            } else {
+                // For larger files with progress tracking, use chunked copy
+                try copyFileWithProgress(
+                    from: left,
+                    to: operation.right,
+                    fileSize: fileSize,
+                    progressCallback: progressCallback
+                )
+            }
+
+            return fileSize
 
         case .delete:
             // Delete file
             if fileManager.fileExists(atPath: operation.right) {
                 try fileManager.removeItem(atPath: operation.right)
             }
+            return 0
         }
     }.value
+}
+
+/// Copies a file with progress reporting
+private func copyFileWithProgress(
+    from source: String,
+    to destination: String,
+    fileSize: Int64,
+    progressCallback: (@Sendable (Int64) -> Void)?
+) throws {
+    let bufferSize = COPY_CHUNK_SIZE
+
+    guard let inputStream = InputStream(fileAtPath: source) else {
+        throw DirectorySyncError.operationFailed("Failed to open source file")
+    }
+    guard let outputStream = OutputStream(toFileAtPath: destination, append: false) else {
+        throw DirectorySyncError.operationFailed("Failed to create destination file")
+    }
+
+    inputStream.open()
+    outputStream.open()
+
+    defer {
+        inputStream.close()
+        outputStream.close()
+    }
+
+    var buffer = [UInt8](repeating: 0, count: bufferSize)
+    var totalBytesRead: Int64 = 0
+
+    while inputStream.hasBytesAvailable {
+        let bytesRead = inputStream.read(&buffer, maxLength: bufferSize)
+
+        if bytesRead < 0 {
+            throw DirectorySyncError.operationFailed("Failed to read from source file")
+        }
+
+        if bytesRead == 0 {
+            break
+        }
+
+        let bytesWritten = outputStream.write(buffer, maxLength: bytesRead)
+        if bytesWritten != bytesRead {
+            throw DirectorySyncError.operationFailed("Failed to write to destination file")
+        }
+
+        totalBytesRead += Int64(bytesRead)
+        progressCallback?(totalBytesRead)
+    }
 }
