@@ -139,64 +139,69 @@ public struct Ignore: Sendable {
     }
 
     /// Loads ignore patterns from .filesignore files
-    /// - Parameters:
-    ///   - leftPath: Left directory path
-    ///   - rightPath: Right directory path
-    /// - Returns: Ignore instance with merged patterns from all sources
-    public static func load(leftPath: String, rightPath: String) -> Ignore {
-        var allPatterns: [String] = []
+    public static func load(leftPath: String, rightPath: String) async -> Ignore {
+        var filePaths: [String] = []
 
-        // Load from home directory
         if let homeDir = FileManager.default.homeDirectoryForCurrentUser.path(
             percentEncoded: false) as String?
         {
             let homePath = URL(fileURLWithPath: homeDir)
                 .appendingPathComponent(".filesignore")
                 .path(percentEncoded: false)
-            if let patterns = loadPatternsFromFile(homePath) {
-                allPatterns.append(contentsOf: patterns)
+            filePaths.append(homePath)
+        }
+
+        filePaths.append(
+            URL(fileURLWithPath: leftPath)
+                .appendingPathComponent(".filesignore")
+                .path(percentEncoded: false)
+        )
+
+        filePaths.append(
+            URL(fileURLWithPath: rightPath)
+                .appendingPathComponent(".filesignore")
+                .path(percentEncoded: false)
+        )
+
+        // Load all files in parallel
+        let allPatternArrays = await withTaskGroup(of: (Int, [String]).self) { group in
+            for (index, path) in filePaths.enumerated() {
+                group.addTask {
+                    let patterns = await loadPatternsFromFile(path) ?? []
+                    return (index, patterns)
+                }
             }
+
+            var results: [(Int, [String])] = []
+            for await result in group {
+                results.append(result)
+            }
+            return results
         }
 
-        // Load from left directory
-        let leftIgnorePath = URL(fileURLWithPath: leftPath)
-            .appendingPathComponent(".filesignore")
-            .path(percentEncoded: false)
-        if let patterns = loadPatternsFromFile(leftIgnorePath) {
-            allPatterns.append(contentsOf: patterns)
-        }
-
-        // Load from right directory
-        let rightIgnorePath = URL(fileURLWithPath: rightPath)
-            .appendingPathComponent(".filesignore")
-            .path(percentEncoded: false)
-        if let patterns = loadPatternsFromFile(rightIgnorePath) {
-            allPatterns.append(contentsOf: patterns)
-        }
+        let sortedResults = allPatternArrays.sorted { $0.0 < $1.0 }
+        let allPatterns = sortedResults.flatMap { $0.1 }
 
         return Ignore(patterns: allPatterns)
     }
 
-    /// Loads patterns from a .filesignore file
-    private static func loadPatternsFromFile(_ path: String) -> [String]? {
-        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
-            return nil
-        }
-
-        return content.components(separatedBy: .newlines)
+    /// Loads patterns from a .filesignore file asynchronously
+    @concurrent
+    private static func loadPatternsFromFile(_ path: String) async -> [String]? {
+        await Task.detached {
+            guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+                return nil
+            }
+            return content.components(separatedBy: .newlines)
+        }.value
     }
 
     /// Checks if a file should be ignored
-    /// - Parameters:
-    ///   - relativePath: The relative path of the file
-    ///   - isDirectory: Whether the path is a directory
-    /// - Returns: true if the file should be ignored
     public func shouldIgnore(_ relativePath: String, isDirectory: Bool = false) -> Bool {
         var ignored = false
 
         for pattern in patterns {
             if pattern.matches(relativePath, isDirectory: isDirectory) {
-                // Negation patterns reverse the ignore state
                 ignored = !pattern.isNegation
             }
         }

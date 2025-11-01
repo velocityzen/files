@@ -257,6 +257,7 @@ private func planTwoWaySync(
 }
 
 /// Resolves a conflict between two modified files
+@concurrent
 private func resolveConflict(
     relativePath: String,
     leftFile: String,
@@ -342,6 +343,7 @@ private func executeSyncOperations(_ operations: [SyncOperation]) async throws -
 }
 
 /// Executes a single sync operation
+@concurrent
 private func executeSyncOperation(_ operation: SyncOperation) async throws {
     try await Task.detached {
         let fileManager = FileManager.default

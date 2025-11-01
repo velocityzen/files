@@ -52,7 +52,12 @@ public func directoryDifference(
     }
 
     // Load ignore patterns if not provided
-    let patterns = ignore ?? Ignore.load(leftPath: leftPath, rightPath: rightPath)
+    let patterns: Ignore
+    if let ignore = ignore {
+        patterns = ignore
+    } else {
+        patterns = await Ignore.load(leftPath: leftPath, rightPath: rightPath)
+    }
 
     let filesLeft = try await scanDirectory(
         at: leftPath, recursive: recursive, ignore: patterns)
@@ -98,6 +103,7 @@ public func directoryDifference(
 
 /// Checks which files from left exist in right and which are modified
 /// This is an optimization that avoids scanning the entire right directory
+@concurrent
 private func checkLeftFilesInRight(
     leftFiles: Set<String>,
     leftPath: String,
@@ -148,6 +154,7 @@ private enum FileStatus {
 }
 
 /// Scans a directory and returns relative paths of all files
+@concurrent
 private func scanDirectory(at path: String, recursive: Bool, ignore: Ignore)
     async throws -> Set<String>
 {
@@ -209,6 +216,7 @@ private func scanDirectory(at path: String, recursive: Bool, ignore: Ignore)
 }
 
 /// Finds files that exist in both directories but have different content
+@concurrent
 private func findModifiedFiles(
     common: Set<String>,
     leftPath: String,
@@ -239,6 +247,7 @@ private func findModifiedFiles(
 }
 
 /// Compares two files to determine if they have different content
+@concurrent
 private func filesAreDifferent(_ path1: String, _ path2: String) async throws -> Bool {
     try await Task.detached {
         let fileManager = FileManager.default
