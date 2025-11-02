@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Get Version from Tag
         id: version
@@ -41,4 +41,4 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz"
+          files: "./files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz"
