@@ -14,6 +14,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Get Version from Tag
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/*/}" >> $GITHUB_OUTPUT
+
       - name: Select Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode_26.1.app/Contents/Developer
@@ -29,10 +33,10 @@ jobs:
       - name: Prepare Binary
         run: |
           mkdir -p release
-          cp .build/apple/Products/Release/files release/files
+          cp .build/arm64-apple-macosx/release/files release/files
           chmod +x release/files
           cd release
-          tar -czf files-macos-arm64.tar.gz files
+          tar -czf files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz files
 
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
@@ -40,6 +44,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./release/files-macos-arm64.tar.gz
-          asset_name: files-macos-arm64.tar.gz
+          asset_path: ./release/files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz
+          asset_name: files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz
           asset_content_type: application/gzip
