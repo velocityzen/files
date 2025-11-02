@@ -51,11 +51,11 @@ actor ProgressFormatter {
             "[\(overallPercentage)%] \(progress.completedOperations)/\(progress.totalOperations) files - \(transferred)/\(total) - \(speed)\(eta)",
             terminator: "")
 
-        fflush(stdout)
+        try? FileHandle.standardOutput.synchronize()
     }
 
     func complete() {
-        print()  // New line after progress
+        print()
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
