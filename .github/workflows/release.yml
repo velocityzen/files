@@ -41,4 +41,4 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "./release/files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz"
+          files: "files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz"
