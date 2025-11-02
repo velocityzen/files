@@ -21,7 +21,13 @@ A fast and efficient command-line tool for comparing and synchronizing directori
 
 ## Installation
 
-TBD
+### Download Pre-built Binary
+
+The latest macOS build can be downloaded from the [GitHub Releases](https://github.com/velocityzen/Files/releases) page.
+
+### Build from Source
+
+See the [Building](#building) section below for instructions on building from source.
 
 ## File Filtering with .filesignore
 
