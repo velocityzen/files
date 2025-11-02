@@ -38,12 +38,7 @@ jobs:
           cd release
           tar -czf files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz files
 
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./release/files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz
-          asset_name: files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz
-          asset_content_type: application/gzip
+          files: "./release/files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz"
