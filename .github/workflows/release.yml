@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  build-and-release:
+    name: Build and Upload Release Assets
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Swift Version
+        run: swift --version
+
+      - name: Build Release Binary
+        run: |
+          swift build -c release --arch arm64
+
+      - name: Prepare Binary
+        run: |
+          mkdir -p release
+          cp .build/apple/Products/Release/files release/files
+          chmod +x release/files
+          cd release
+          tar -czf files-macos-arm64.tar.gz files
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./release/files-macos-arm64.tar.gz
+          asset_name: files-macos-arm64.tar.gz
+          asset_content_type: application/gzip
