@@ -36,7 +36,7 @@ jobs:
           cp .build/arm64-apple-macosx/release/files release/files
           chmod +x release/files
           cd release
-          tar -czf files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz files
+          tar -czf ../files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz files
 
       - name: Release
         uses: softprops/action-gh-release@v2
