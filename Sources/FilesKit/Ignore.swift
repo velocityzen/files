@@ -59,48 +59,50 @@ public struct Ignore: Sendable {
                 let char = glob[i]
 
                 switch char {
-                case "*":
-                    // Check for ** (matches any number of directories)
-                    let nextIndex = glob.index(after: i)
-                    if nextIndex < glob.endIndex && glob[nextIndex] == "*" {
-                        // ** followed by / or at the end
-                        let afterNext = glob.index(after: nextIndex)
-                        if afterNext < glob.endIndex && glob[afterNext] == "/" {
-                            // **/ matches zero or more directories
-                            pattern += "(.*/|)"
-                            i = afterNext
-                        } else if afterNext >= glob.endIndex {
-                            // ** at the end matches everything
-                            pattern += ".*"
-                            i = nextIndex
+                    case "*":
+                        // Check for ** (matches any number of directories)
+                        let nextIndex = glob.index(after: i)
+                        if nextIndex < glob.endIndex && glob[nextIndex] == "*" {
+                            // ** followed by / or at the end
+                            let afterNext = glob.index(after: nextIndex)
+                            if afterNext < glob.endIndex && glob[afterNext] == "/" {
+                                // **/ matches zero or more directories
+                                pattern += "(.*/|)"
+                                i = afterNext
+                            } else if afterNext >= glob.endIndex {
+                                // ** at the end matches everything
+                                pattern += ".*"
+                                i = nextIndex
+                            } else {
+                                // ** not followed by /, treat as *
+                                pattern += "[^/]*"
+                            }
                         } else {
-                            // ** not followed by /, treat as *
+                            // Single * matches anything except /
                             pattern += "[^/]*"
                         }
-                    } else {
-                        // Single * matches anything except /
-                        pattern += "[^/]*"
-                    }
 
-                case "?":
-                    pattern += "[^/]"
+                    case "?":
+                        pattern += "[^/]"
 
-                case ".":
-                    pattern += "\\."
+                    case ".":
+                        pattern += "\\."
 
-                case "\\":
-                    // Escape character
-                    i = glob.index(after: i)
-                    if i < glob.endIndex {
-                        pattern += NSRegularExpression.escapedPattern(for: String(glob[i]))
-                    }
+                    case "\\":
+                        // Escape character
+                        i = glob.index(after: i)
+                        if i < glob.endIndex {
+                            pattern += NSRegularExpression.escapedPattern(for: String(glob[i]))
+                        }
 
-                default:
-                    if char.isLetter || char.isNumber || char == "/" || char == "-" || char == "_" {
-                        pattern.append(char)
-                    } else {
-                        pattern += NSRegularExpression.escapedPattern(for: String(char))
-                    }
+                    default:
+                        if char.isLetter || char.isNumber || char == "/" || char == "-"
+                            || char == "_"
+                        {
+                            pattern.append(char)
+                        } else {
+                            pattern += NSRegularExpression.escapedPattern(for: String(char))
+                        }
                 }
 
                 i = glob.index(after: i)

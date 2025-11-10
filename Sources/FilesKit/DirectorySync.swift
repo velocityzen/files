@@ -9,6 +9,7 @@ public struct SyncOperation: Sendable {
         case copy
         case delete
         case update
+        case info
     }
 
     public let type: OperationType
@@ -51,10 +52,10 @@ public enum DirectorySyncError: Error, Sendable {
     /// Converts a DirectoryDifferenceError to a DirectorySyncError
     static func from(error: DirectoryDifferenceError) -> DirectorySyncError {
         switch error {
-        case .invalidDirectory(let path):
-            return .invalidDirectory(path)
-        case .accessDenied(let message):
-            return .accessDenied(message)
+            case .invalidDirectory(let path):
+                return .invalidDirectory(path)
+            case .accessDenied(let message):
+                return .accessDenied(message)
         }
     }
 }
@@ -83,16 +84,16 @@ public func directorySync(
     ignore: Ignore? = nil,
     progress: ProgressHandler? = nil
 ) async throws -> SyncResult {
-    let diff: DirectoryDifference
-    do {
-        let rightMode: IncludeOnlyInRight =
-            switch mode {
+    let rightMode: IncludeOnlyInRight =
+        switch mode {
             case .oneWay:
                 deletions ? .all : showMoreRight ? .leafFoldersOnly : .none
             case .twoWay:
                 .all
-            }
+        }
 
+    let diff: DirectoryDifference
+    do {
         diff = try await directoryDifference(
             left: leftPath,
             right: rightPath,
@@ -105,7 +106,7 @@ public func directorySync(
     }
 
     // Plan sync operations based on mode
-    let operations = try await planSyncOperations(
+    var operations = try await planSyncOperations(
         diff: diff,
         leftPath: leftPath,
         rightPath: rightPath,
@@ -113,13 +114,28 @@ public func directorySync(
         deletions: deletions
     )
 
+    if rightMode == .leafFoldersOnly {
+        operations += diff.onlyInRight.map {
+            createSyncOperation(
+                type: .info,
+                relativePath: $0,
+                leftBasePath: leftPath,
+                rightBasePath: rightPath
+            )
+        }
+    }
+
     // Execute operations if not in dry-run mode
     if dryRun {
         return SyncResult(
-            operations: operations, succeeded: 0, failed: 0, skipped: operations.count)
-    } else {
-        return try await executeSyncOperations(operations, progress: progress)
+            operations: operations,
+            succeeded: 0,
+            failed: 0,
+            skipped: operations.count
+        )
     }
+
+    return try await executeSyncOperations(operations, progress: progress)
 }
 
 /// Plans sync operations based on the directory difference and sync mode
@@ -131,16 +147,16 @@ private func planSyncOperations(
     deletions: Bool
 ) async throws -> [SyncOperation] {
     switch mode {
-    case .oneWay:
-        return planOneWaySync(
-            diff: diff, leftPath: leftPath, rightPath: rightPath, deletions: deletions)
-    case .twoWay(let conflictResolution):
-        return try await planTwoWaySync(
-            diff: diff,
-            leftPath: leftPath,
-            rightPath: rightPath,
-            conflictResolution: conflictResolution
-        )
+        case .oneWay:
+            return planOneWaySync(
+                diff: diff, leftPath: leftPath, rightPath: rightPath, deletions: deletions)
+        case .twoWay(let conflictResolution):
+            return try await planTwoWaySync(
+                diff: diff,
+                leftPath: leftPath,
+                rightPath: rightPath,
+                conflictResolution: conflictResolution
+            )
     }
 }
 
@@ -272,57 +288,57 @@ private func resolveConflict(
     resolution: ConflictResolution
 ) async throws -> SyncOperation? {
     switch resolution {
-    case .skip:
-        return nil
-
-    case .keepLeft:
-        return SyncOperation(
-            type: .update,
-            relativePath: relativePath,
-            left: leftFile,
-            right: rightFile
-        )
-
-    case .keepRight:
-        return SyncOperation(
-            type: .update,
-            relativePath: relativePath,
-            left: rightFile,
-            right: leftFile
-        )
-
-    case .keepNewest:
-        let fileManager = FileManager.default
-        let leftAttrs = try fileManager.attributesOfItem(atPath: leftFile)
-        let rightAttrs = try fileManager.attributesOfItem(atPath: rightFile)
-
-        guard let leftDate = leftAttrs[.modificationDate] as? Date,
-            let rightDate = rightAttrs[.modificationDate] as? Date
-        else {
-            // If we can't determine dates, skip
+        case .skip:
             return nil
-        }
 
-        if leftDate > rightDate {
-            // Left is newer, copy to right
+        case .keepLeft:
             return SyncOperation(
                 type: .update,
                 relativePath: relativePath,
                 left: leftFile,
                 right: rightFile
             )
-        } else if rightDate > leftDate {
-            // Right is newer, copy to left
+
+        case .keepRight:
             return SyncOperation(
                 type: .update,
                 relativePath: relativePath,
                 left: rightFile,
                 right: leftFile
             )
-        } else {
-            // Same modification time, skip
-            return nil
-        }
+
+        case .keepNewest:
+            let fileManager = FileManager.default
+            let leftAttrs = try fileManager.attributesOfItem(atPath: leftFile)
+            let rightAttrs = try fileManager.attributesOfItem(atPath: rightFile)
+
+            guard let leftDate = leftAttrs[.modificationDate] as? Date,
+                let rightDate = rightAttrs[.modificationDate] as? Date
+            else {
+                // If we can't determine dates, skip
+                return nil
+            }
+
+            if leftDate > rightDate {
+                // Left is newer, copy to right
+                return SyncOperation(
+                    type: .update,
+                    relativePath: relativePath,
+                    left: leftFile,
+                    right: rightFile
+                )
+            } else if rightDate > leftDate {
+                // Right is newer, copy to left
+                return SyncOperation(
+                    type: .update,
+                    relativePath: relativePath,
+                    left: rightFile,
+                    right: leftFile
+                )
+            } else {
+                // Same modification time, skip
+                return nil
+            }
     }
 }
 
@@ -354,12 +370,13 @@ private func executeSyncOperations(
     var succeeded = 0
     var failed = 0
     let skipped = 0
+    let operationsToRun = operations.filter { $0.type != .info }
 
     // Calculate total bytes if progress tracking is enabled
-    let totalBytes = await calculateTotalBytes(operations)
+    let totalBytes = await calculateTotalBytes(operationsToRun)
     let tracker = ProgressTracker()
 
-    for (index, operation) in operations.enumerated() {
+    for (index, operation) in operationsToRun.enumerated() {
         do {
             // Get file size before executing operation
             let fileSize = getOperationSize(operation)
@@ -374,7 +391,7 @@ private func executeSyncOperations(
                         SyncProgress(
                             currentOperation: operation,
                             completedOperations: index,
-                            totalOperations: operations.count,
+                            totalOperations: operationsToRun.count,
                             currentFileBytes: currentBytes,
                             currentFileTotalBytes: fileSize,
                             totalBytesTransferred: totalTransferred + currentBytes,
@@ -395,7 +412,7 @@ private func executeSyncOperations(
                 SyncProgress(
                     currentOperation: nil,
                     completedOperations: index + 1,
-                    totalOperations: operations.count,
+                    totalOperations: operationsToRun.count,
                     currentFileBytes: 0,
                     currentFileTotalBytes: 0,
                     totalBytesTransferred: totalTransferred,
@@ -458,50 +475,53 @@ private func executeSyncOperation(
         let fileManager = FileManager.default
 
         switch operation.type {
-        case .copy, .update:
-            guard let left = operation.left else {
-                throw DirectorySyncError.operationFailed("No left for copy/update operation")
-            }
+            case .copy, .update:
+                guard let left = operation.left else {
+                    throw DirectorySyncError.operationFailed("No left for copy/update operation")
+                }
 
-            // Get file size
-            let attrs = try fileManager.attributesOfItem(atPath: left)
-            let fileSize = (attrs[.size] as? Int64) ?? 0
+                // Get file size
+                let attrs = try fileManager.attributesOfItem(atPath: left)
+                let fileSize = (attrs[.size] as? Int64) ?? 0
 
-            // Create right directory if needed
-            let rightURL = URL(fileURLWithPath: operation.right)
-            let rightDir = rightURL.deletingLastPathComponent()
-            try fileManager.createDirectory(
-                at: rightDir,
-                withIntermediateDirectories: true,
-                attributes: nil
-            )
-
-            // Copy file (will overwrite if exists for update operations)
-            if fileManager.fileExists(atPath: operation.right) {
-                try fileManager.removeItem(atPath: operation.right)
-            }
-
-            // For small files or when no progress callback, use simple copy
-            if fileSize < MIN_SIZE_TO_CHUNK || progressCallback == nil {
-                try fileManager.copyItem(atPath: left, toPath: operation.right)
-            } else {
-                // For larger files with progress tracking, use chunked copy
-                try copyFileWithProgress(
-                    from: left,
-                    to: operation.right,
-                    fileSize: fileSize,
-                    progressCallback: progressCallback
+                // Create right directory if needed
+                let rightURL = URL(fileURLWithPath: operation.right)
+                let rightDir = rightURL.deletingLastPathComponent()
+                try fileManager.createDirectory(
+                    at: rightDir,
+                    withIntermediateDirectories: true,
+                    attributes: nil
                 )
-            }
 
-            return fileSize
+                // Copy file (will overwrite if exists for update operations)
+                if fileManager.fileExists(atPath: operation.right) {
+                    try fileManager.removeItem(atPath: operation.right)
+                }
 
-        case .delete:
-            // Delete file
-            if fileManager.fileExists(atPath: operation.right) {
-                try fileManager.removeItem(atPath: operation.right)
-            }
-            return 0
+                // For small files or when no progress callback, use simple copy
+                if fileSize < MIN_SIZE_TO_CHUNK || progressCallback == nil {
+                    try fileManager.copyItem(atPath: left, toPath: operation.right)
+                } else {
+                    // For larger files with progress tracking, use chunked copy
+                    try copyFileWithProgress(
+                        from: left,
+                        to: operation.right,
+                        fileSize: fileSize,
+                        progressCallback: progressCallback
+                    )
+                }
+
+                return fileSize
+
+            case .delete:
+                // Delete file
+                if fileManager.fileExists(atPath: operation.right) {
+                    try fileManager.removeItem(atPath: operation.right)
+                }
+                return 0
+
+            case .info:
+                throw DirectorySyncError.operationFailed("Unsupported operation")
         }
     }.value
 }

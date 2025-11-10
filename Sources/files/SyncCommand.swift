@@ -105,7 +105,12 @@ extension Files {
                     await display.complete()
                 }
 
-                printSyncResults(result: result, format: format, verbose: verbose, dryRun: dryRun)
+                OutputFormatter.printSyncResults(
+                    result: result,
+                    format: format,
+                    verbose: verbose,
+                    dryRun: dryRun
+                )
 
                 if !dryRun && result.failed > 0 {
                     throw ExitCode(1)
@@ -113,62 +118,6 @@ extension Files {
             } catch let error as DirectorySyncError {
                 OutputFormatter.printError(error)
                 throw ExitCode(2)
-            }
-        }
-
-        func printSyncResults(
-            result: SyncResult, format: OutputFormat, verbose: Bool, dryRun: Bool
-        ) {
-            switch format {
-            case .text:
-                printSyncTextFormat(result: result, verbose: verbose, dryRun: dryRun)
-            case .json, .summary:
-                OutputFormatter.printSyncResults(
-                    result: result, format: format, verbose: verbose, dryRun: dryRun)
-            }
-        }
-
-        func printSyncTextFormat(result: SyncResult, verbose: Bool, dryRun: Bool) {
-            if result.operations.isEmpty {
-                print("✓ Directories are in sync - no operations needed")
-                return
-            }
-
-            let verb = dryRun ? "Would perform" : "Performed"
-            print("\(verb) \(result.operations.count) operation(s)")
-            print()
-
-            // Group operations by type
-            let copies = result.operations.filter { $0.type == .copy }
-            let updates = result.operations.filter { $0.type == .update }
-            let deletes = result.operations.filter { $0.type == .delete }
-
-            if !copies.isEmpty {
-                OutputFormatter.printOperationList(
-                    "Copy", operations: copies,
-                    verbose: verbose
-                )
-                print()
-            }
-
-            if !updates.isEmpty {
-                OutputFormatter.printOperationList(
-                    "Update", operations: updates,
-                    verbose: verbose)
-                print()
-            }
-
-            if !deletes.isEmpty {
-                OutputFormatter.printOperationList(
-                    "Delete", operations: deletes,
-                    verbose: verbose)
-                print()
-            }
-
-            if !dryRun {
-                print(
-                    "Summary: \(result.succeeded) succeeded, \(result.failed) failed, \(result.skipped) skipped"
-                )
             }
         }
     }
@@ -181,10 +130,10 @@ extension Files {
 
         func toConflictResolution() -> ConflictResolution {
             switch self {
-            case .newest: return .keepNewest
-            case .left: return .keepLeft
-            case .right: return .keepRight
-            case .skip: return .skip
+                case .newest: return .keepNewest
+                case .left: return .keepLeft
+                case .right: return .keepRight
+                case .skip: return .skip
             }
         }
     }

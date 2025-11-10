@@ -166,6 +166,7 @@ private func validateDirectories(leftPath: String, rightPath: String) throws {
 }
 
 /// Full comparison mode: scans both directories completely
+@concurrent
 private func fullComparison(
     leftPath: String,
     rightPath: String,
@@ -195,6 +196,7 @@ private func fullComparison(
 }
 
 /// Optimized comparison mode: only checks if left files exist in right
+@concurrent
 private func optimizedComparison(
     leftPath: String,
     rightPath: String,
@@ -215,6 +217,7 @@ private func optimizedComparison(
 }
 
 /// Leaf folders comparison mode: scans left's leaf directories on the right side
+@concurrent
 private func leafFoldersComparison(
     leftPath: String,
     rightPath: String,
