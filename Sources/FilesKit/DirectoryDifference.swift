@@ -82,12 +82,22 @@ public enum DirectoryDifferenceError: Error, Sendable {
     case accessDenied(String)
 }
 
+/// Specifies what files from the right directory to include in the comparison result
+public enum IncludeOnlyInRight: Sendable {
+    /// Include all files from the right directory (full comparison)
+    case all
+    /// Don't include any files only in right (most optimized)
+    case none
+    /// Include only files in right's leaf directories that match left's leaf directories
+    case leafFoldersOnly
+}
+
 /// Compares two directories and returns their differences
 /// - Parameters:
 ///   - leftPath: Path to the left directory
 ///   - rightPath: Path to the right directory
 ///   - recursive: Whether to compare subdirectories recursively (default: true)
-///   - includeOnlyInRight: If true, includes files only in right directory in the result (default: true). Set to false for optimization when you don't need to know about right-only files.
+///   - includeOnlyInRight: Specifies what files from the right directory to include (default: .all)
 ///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
 /// - Returns: A `DirectoryDifference` containing the differences between the directories
 /// - Throws: `DirectoryDifferenceError` if directories are invalid or inaccessible
@@ -95,9 +105,50 @@ public func directoryDifference(
     left leftPath: String,
     right rightPath: String,
     recursive: Bool = true,
-    includeOnlyInRight: Bool = true,
+    includeOnlyInRight: IncludeOnlyInRight = .all,
     ignore: Ignore? = nil
 ) async throws -> DirectoryDifference {
+    // Validate directories
+    try validateDirectories(leftPath: leftPath, rightPath: rightPath)
+
+    // Load ignore patterns
+    let patterns =
+        if let ignore { ignore } else {
+            await Ignore.load(leftPath: leftPath, rightPath: rightPath)
+        }
+
+    // Scan left directory
+    let filesLeft = try await scanDirectory(
+        at: leftPath, recursive: recursive, ignore: patterns)
+
+    // Choose the appropriate comparison strategy based on includeOnlyInRight mode
+    return switch includeOnlyInRight {
+        case .all:
+            try await fullComparison(
+                leftPath: leftPath,
+                rightPath: rightPath,
+                filesLeft: filesLeft,
+                recursive: recursive,
+                ignore: patterns
+            )
+        case .none:
+            try await optimizedComparison(
+                leftPath: leftPath,
+                rightPath: rightPath,
+                filesLeft: filesLeft
+            )
+        case .leafFoldersOnly:
+            try await leafFoldersComparison(
+                leftPath: leftPath,
+                rightPath: rightPath,
+                filesLeft: filesLeft,
+                ignore: patterns
+            )
+    }
+}
+
+/// Validates that both paths are valid directories
+private func validateDirectories(leftPath: String, rightPath: String) throws {
     let fileManager = FileManager.default
 
     var isDirectory: ObjCBool = false
@@ -112,43 +163,23 @@ public func directoryDifference(
     else {
         throw DirectoryDifferenceError.invalidDirectory(rightPath)
     }
+}
 
-    // Load ignore patterns if not provided
-    let patterns: Ignore
-    if let ignore = ignore {
-        patterns = ignore
-    } else {
-        patterns = await Ignore.load(leftPath: leftPath, rightPath: rightPath)
-    }
-
-    let filesLeft = try await scanDirectory(
-        at: leftPath, recursive: recursive, ignore: patterns)
-
-    if !includeOnlyInRight {
-        // Optimized path: only check if left files exist in right
-        let (common, modified) = try await checkLeftFilesInRight(
-            leftFiles: filesLeft,
-            leftPath: leftPath,
-            rightPath: rightPath
-        )
-
-        return DirectoryDifference(
-            onlyInLeft: filesLeft.subtracting(common).subtracting(modified),
-            onlyInRight: [],
-            common: common,
-            modified: modified
-        )
-    }
-
-    // Full scan: compare both directories
+/// Full comparison mode: scans both directories completely
+private func fullComparison(
+    leftPath: String,
+    rightPath: String,
+    filesLeft: Set<String>,
+    recursive: Bool,
+    ignore: Ignore
+) async throws -> DirectoryDifference {
     let filesRight = try await scanDirectory(
-        at: rightPath, recursive: recursive, ignore: patterns)
+        at: rightPath, recursive: recursive, ignore: ignore)
 
     let onlyInLeft = filesLeft.subtracting(filesRight)
     let onlyInRight = filesRight.subtracting(filesLeft)
     let common = filesLeft.intersection(filesRight)
 
-    // Check for modified files in common set
     let modified = try await findModifiedFiles(
         common: common,
         leftPath: leftPath,
@@ -160,6 +191,67 @@ public func directoryDifference(
         onlyInRight: onlyInRight,
         common: common.subtracting(modified),
         modified: modified
+    )
+}
+
+/// Optimized comparison mode: only checks if left files exist in right
+private func optimizedComparison(
+    leftPath: String,
+    rightPath: String,
+    filesLeft: Set<String>
+) async throws -> DirectoryDifference {
+    let (common, modified) = try await checkLeftFilesInRight(
+        leftFiles: filesLeft,
+        leftPath: leftPath,
+        rightPath: rightPath
+    )
+
+    return DirectoryDifference(
+        onlyInLeft: filesLeft.subtracting(common).subtracting(modified),
+        onlyInRight: [],
+        common: common,
+        modified: modified
+    )
+}
+
+/// Leaf folders comparison mode: scans left's leaf directories on the right side
+private func leafFoldersComparison(
+    leftPath: String,
+    rightPath: String,
+    filesLeft: Set<String>,
+    ignore: Ignore
+) async throws -> DirectoryDifference {
+    // First, do the optimized check for all left files
+    let (common, modified) = try await checkLeftFilesInRight(
+        leftFiles: filesLeft,
+        leftPath: leftPath,
+        rightPath: rightPath
+    )
+
+    // Derive leaf directories from the files we already scanned
+    let leftLeafDirs = findLeafDirectoriesFromFiles(filesLeft)
+    let filesInRightLeaves = try await scanLeafDirectories(
+        at: rightPath,
+        leafDirs: leftLeafDirs,
+        ignore: ignore
+    )
+
+    // Calculate what's only in right (within left's leaf directories)
+    let onlyInRightLeaves = filesInRightLeaves.subtracting(filesLeft)
+
+    // For files in both, check if they're modified (but only within left's leaf dirs)
+    let commonInLeaves = filesInRightLeaves.intersection(filesLeft)
+    let modifiedInLeaves = try await findModifiedFiles(
+        common: commonInLeaves,
+        leftPath: leftPath,
+        rightPath: rightPath
+    )
+
+    return DirectoryDifference(
+        onlyInLeft: filesLeft.subtracting(common).subtracting(modified),
+        onlyInRight: onlyInRightLeaves,
+        common: common.union(commonInLeaves.subtracting(modifiedInLeaves)),
+        modified: modified.union(modifiedInLeaves)
     )
 }
 
@@ -196,12 +288,12 @@ private func checkLeftFilesInRight(
 
         for try await (file, status) in group {
             switch status {
-            case .same:
-                common.insert(file)
-            case .modified:
-                modified.insert(file)
-            case .onlyInLeft:
-                break  // Will be in onlyInLeft by subtraction
+                case .same:
+                    common.insert(file)
+                case .modified:
+                    modified.insert(file)
+                case .onlyInLeft:
+                    break  // Will be in onlyInLeft by subtraction
             }
         }
 
@@ -213,6 +305,102 @@ private enum FileStatus {
     case same
     case modified
     case onlyInLeft
+}
+
+/// Derives leaf directories from a set of file paths
+/// A leaf directory is one that contains files but has no subdirectories
+private func findLeafDirectoriesFromFiles(_ files: Set<String>) -> Set<String> {
+    var allDirectories = Set<String>()
+    var directoriesWithSubdirs = Set<String>()
+
+    // Extract all directories from file paths
+    for filePath in files {
+        let components = (filePath as NSString).pathComponents
+
+        // Build directory path incrementally
+        for i in 0..<(components.count - 1) {  // Exclude the file name
+            let dirPath = components[0...i].joined(separator: "/")
+            if !dirPath.isEmpty && dirPath != "." {
+                allDirectories.insert(dirPath)
+
+                // Mark parent directories as having subdirectories
+                if i > 0 {
+                    let parentPath = components[0..<i].joined(separator: "/")
+                    if !parentPath.isEmpty && parentPath != "." {
+                        directoriesWithSubdirs.insert(parentPath)
+                    }
+                }
+            }
+        }
+    }
+
+    // Leaf directories are those without subdirectories
+    return allDirectories.subtracting(directoriesWithSubdirs)
+}
+
+/// Scans only files within specified leaf directories
+@concurrent
+private func scanLeafDirectories(
+    at path: String,
+    leafDirs: Set<String>,
+    ignore: Ignore
+) async throws -> Set<String> {
+    try await Task.detached {
+        let fileManager = FileManager.default
+        let baseURL = URL(fileURLWithPath: path)
+
+        var files = Set<String>()
+
+        // Standardize base path
+        let standardizedBase = baseURL.standardizedFileURL
+        var standardizedBasePath = standardizedBase.path(percentEncoded: false)
+        if standardizedBasePath.hasSuffix("/") {
+            standardizedBasePath = String(standardizedBasePath.dropLast())
+        }
+
+        // Scan each leaf directory
+        for leafDir in leafDirs {
+            let leafURL = baseURL.appendingPathComponent(leafDir)
+
+            guard
+                let enumerator = fileManager.enumerator(
+                    at: leafURL,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: [.skipsSubdirectoryDescendants]
+                )
+            else {
+                continue
+            }
+
+            for case let fileURL as URL in enumerator.allObjects {
+                let resourceValues = try fileURL.resourceValues(forKeys: [.isDirectoryKey])
+                let isDirectory = resourceValues.isDirectory == true
+
+                if !isDirectory {
+                    let standardizedFile = fileURL.standardizedFileURL
+                    var filePath = standardizedFile.path(percentEncoded: false)
+
+                    if filePath.hasSuffix("/") {
+                        filePath = String(filePath.dropLast())
+                    }
+
+                    // Get relative path from base
+                    let relativePath: String
+                    if filePath.hasPrefix(standardizedBasePath + "/") {
+                        relativePath = String(filePath.dropFirst(standardizedBasePath.count + 1))
+                    } else {
+                        relativePath = fileURL.lastPathComponent
+                    }
+
+                    if !ignore.shouldIgnore(relativePath, isDirectory: false) {
+                        files.insert(relativePath)
+                    }
+                }
+            }
+        }
+
+        return files
+    }.value
 }
 
 /// Scans a directory and returns relative paths of all files

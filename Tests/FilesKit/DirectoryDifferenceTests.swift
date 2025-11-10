@@ -745,4 +745,209 @@ struct JSONComparisonTests {
         #expect(diff.common.isEmpty)
         #expect(!diff.hasDifferences)
     }
+
+    // MARK: - Tests for includeOnlyInRightLeafFolders
+
+    @Test("includeOnlyInRightLeafFolders: finds files only in right leaf directories")
+    func leafFoldersOnlyInRight() async throws {
+        let leftFiles = [
+            "root.txt": "content",
+            "folder1/file1.txt": "content1",
+            "folder1/subfolder/file2.txt": "content2",  // Not a leaf - has subdirs
+            "folder1/subfolder/leaf/file3.txt": "content3",  // Leaf directory
+            "folder2/leaf/file4.txt": "content4",  // Leaf directory
+        ]
+
+        let rightFiles = [
+            "root.txt": "content",
+            "folder1/file1.txt": "content1",
+            "folder1/subfolder/file2.txt": "content2",
+            "folder1/subfolder/leaf/file3.txt": "content3",
+            "folder1/subfolder/leaf/extra.txt": "extra",  // Only in right, in leaf dir
+            "folder2/leaf/file4.txt": "content4",
+            "folder2/leaf/another.txt": "another",  // Only in right, in leaf dir
+            "folder2/notleaf/ignored.txt": "ignored",  // Not in a left leaf dir
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            includeOnlyInRight: .leafFoldersOnly
+        )
+
+        // Should find files only in right leaf directories
+        #expect(diff.onlyInRight.contains("folder1/subfolder/leaf/extra.txt"))
+        #expect(diff.onlyInRight.contains("folder2/leaf/another.txt"))
+        #expect(diff.onlyInRight.count == 2)
+
+        // Should NOT include files in non-leaf directories
+        #expect(!diff.onlyInRight.contains("folder2/notleaf/ignored.txt"))
+
+        // Common files should include those in leaf dirs
+        #expect(diff.common.contains("folder1/subfolder/leaf/file3.txt"))
+        #expect(diff.common.contains("folder2/leaf/file4.txt"))
+    }
+
+    @Test("includeOnlyInRightLeafFolders: detects modified files in leaf directories")
+    func leafFoldersModifiedFiles() async throws {
+        let leftFiles = [
+            "leaf1/file1.txt": "original",
+            "leaf1/file2.txt": "same",
+            "parent/leaf2/file3.txt": "original",
+        ]
+
+        let rightFiles = [
+            "leaf1/file1.txt": "modified",  // Modified in leaf dir
+            "leaf1/file2.txt": "same",
+            "parent/leaf2/file3.txt": "modified",  // Modified in leaf dir
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            includeOnlyInRight: .leafFoldersOnly
+        )
+
+        // Should detect modified files in leaf directories
+        #expect(diff.modified.contains("leaf1/file1.txt"))
+        #expect(diff.modified.contains("parent/leaf2/file3.txt"))
+        #expect(diff.modified.count == 2)
+
+        // Should have common file that wasn't modified
+        #expect(diff.common.contains("leaf1/file2.txt"))
+    }
+
+    @Test("includeOnlyInRightLeafFolders: ignores non-leaf directories on right")
+    func leafFoldersIgnoresNonLeafDirs() async throws {
+        let leftFiles = [
+            "leafdir/file1.txt": "content",
+            "parent/child/file2.txt": "content",  // parent/child is leaf
+        ]
+
+        let rightFiles = [
+            "leafdir/file1.txt": "content",
+            "leafdir/extra.txt": "extra",  // In leaf dir - should be included
+            "parent/child/file2.txt": "content",
+            "parent/file3.txt": "parent",  // In non-leaf dir (parent has child subdir)
+            "newdir/subdir/file4.txt": "new",  // Completely new path, not a left leaf
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            includeOnlyInRight: .leafFoldersOnly
+        )
+
+        // Should include files in left's leaf directories
+        #expect(diff.onlyInRight.contains("leafdir/extra.txt"))
+
+        // Should NOT include files in non-leaf directories or new paths
+        #expect(!diff.onlyInRight.contains("parent/file3.txt"))
+        #expect(!diff.onlyInRight.contains("newdir/subdir/file4.txt"))
+    }
+
+    @Test("includeOnlyInRightLeafFolders: works with empty right leaf directories")
+    func leafFoldersEmptyRightLeafDirs() async throws {
+        let leftFiles = [
+            "leaf1/file1.txt": "content",
+            "leaf2/file2.txt": "content",
+        ]
+
+        let rightFiles = [
+            "leaf1/file1.txt": "content"
+                // leaf2 doesn't exist on right
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            includeOnlyInRight: .leafFoldersOnly
+        )
+
+        // leaf2/file2.txt is only in left, not in common
+        #expect(diff.onlyInLeft.contains("leaf2/file2.txt"))
+        #expect(diff.onlyInRight.isEmpty)
+        #expect(diff.common.contains("leaf1/file1.txt"))
+    }
+
+    @Test("includeOnlyInRightLeafFolders: complex nested structure")
+    func leafFoldersComplexNested() async throws {
+        let leftFiles = [
+            "a/b/c/d/file1.txt": "content",  // d is leaf
+            "a/b/e/file2.txt": "content",  // e is leaf
+            "a/f/file3.txt": "content",  // f is leaf
+            "root.txt": "content",
+        ]
+
+        let rightFiles = [
+            "a/b/c/d/file1.txt": "content",
+            "a/b/c/d/extra1.txt": "extra1",  // In leaf dir d
+            "a/b/e/file2.txt": "modified",  // Modified in leaf dir e
+            "a/b/e/extra2.txt": "extra2",  // In leaf dir e
+            "a/f/file3.txt": "content",
+            "a/g/file4.txt": "notleaf",  // g is not a left leaf dir
+            "root.txt": "content",
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            includeOnlyInRight: .leafFoldersOnly
+        )
+
+        // Should find extra files in left's leaf directories
+        #expect(diff.onlyInRight.contains("a/b/c/d/extra1.txt"))
+        #expect(diff.onlyInRight.contains("a/b/e/extra2.txt"))
+        #expect(diff.onlyInRight.count == 2)
+
+        // Should detect modified file in leaf directory
+        #expect(diff.modified.contains("a/b/e/file2.txt"))
+
+        // Should NOT include file in non-left-leaf directory
+        #expect(!diff.onlyInRight.contains("a/g/file4.txt"))
+
+        // Common files in leaf directories
+        #expect(diff.common.contains("a/b/c/d/file1.txt"))
+        #expect(diff.common.contains("a/f/file3.txt"))
+    }
 }

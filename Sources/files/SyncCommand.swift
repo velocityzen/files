@@ -42,6 +42,13 @@ extension Files {
             help: "Delete files in destination that don't exist in source (one-way sync only)")
         var deletions: Bool = false
 
+        @Flag(
+            name: .long,
+            help:
+                "Scan leaf directories on the right side for additional diff information (one-way sync without deletions only)"
+        )
+        var showMoreRight: Bool = false
+
         @Flag(name: .long, help: "Preview changes without applying them")
         var dryRun: Bool = false
 
@@ -87,6 +94,7 @@ extension Files {
                     mode: syncMode,
                     recursive: recursive,
                     deletions: deletions,
+                    showMoreRight: showMoreRight,
                     dryRun: dryRun,
                     ignore: noIgnore ? Ignore() : nil,
                     progress: progressHandler

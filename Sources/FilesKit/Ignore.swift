@@ -141,7 +141,7 @@ public struct Ignore: Sendable {
         self.patterns = allPatterns.compactMap { Pattern(line: $0) }
     }
 
-    /// Loads ignore patterns from .filesignore files
+    /// Loads ignore patterns from .filesignore files from home directory and left and right directories
     public static func load(leftPath: String, rightPath: String) async -> Ignore {
         var filePaths: [String] = []
 

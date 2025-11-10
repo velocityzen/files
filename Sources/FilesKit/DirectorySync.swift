@@ -66,6 +66,7 @@ public enum DirectorySyncError: Error, Sendable {
 ///   - mode: Sync mode (one-way or two-way with conflict resolution)
 ///   - recursive: Whether to sync subdirectories recursively (default: true)
 ///   - deletions: Whether to delete files in destination that don't exist in source (default: false)
+///   - showMoreRight: If true, scan leaf directories on the right side for additional diff information (one-way sync without deletions only, default: false)
 ///   - dryRun: If true, only plan operations without executing them (default: false)
 ///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
 ///   - progress: Optional progress callback to receive real-time updates (default: nil)
@@ -77,27 +78,26 @@ public func directorySync(
     mode: SyncMode,
     recursive: Bool = true,
     deletions: Bool = false,
+    showMoreRight: Bool = false,
     dryRun: Bool = false,
     ignore: Ignore? = nil,
     progress: ProgressHandler? = nil
 ) async throws -> SyncResult {
     let diff: DirectoryDifference
     do {
-        // Optimization: when doing one-way sync without deletions,
-        // we don't need to know about files only in right
-        let includeOnlyInRight =
+        let rightMode: IncludeOnlyInRight =
             switch mode {
             case .oneWay:
-                deletions
+                deletions ? .all : showMoreRight ? .leafFoldersOnly : .none
             case .twoWay:
-                true
+                .all
             }
 
         diff = try await directoryDifference(
             left: leftPath,
             right: rightPath,
             recursive: recursive,
-            includeOnlyInRight: includeOnlyInRight,
+            includeOnlyInRight: rightMode,
             ignore: ignore
         )
     } catch let error as DirectoryDifferenceError {

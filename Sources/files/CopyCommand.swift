@@ -22,6 +22,11 @@ extension Files {
         @Argument(help: "The destination directory")
         var destinationPath: String
 
+        @Flag(
+            name: .long,
+            help: "Scan leaf directories on the right side for additional diff information")
+        var showMoreRight: Bool = false
+
         @Flag(name: .long, help: "Preview changes without applying them")
         var dryRun: Bool = false
 
@@ -62,6 +67,7 @@ extension Files {
                     mode: .oneWay,
                     recursive: true,
                     deletions: false,
+                    showMoreRight: showMoreRight,
                     dryRun: dryRun,
                     ignore: noIgnore ? Ignore() : nil,
                     progress: progressHandler

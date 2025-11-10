@@ -1,5 +1,3 @@
-
-
 /// Extension to support async compact map operations
 extension Sequence {
     func asyncCompactMap<T>(_ transform: (Element) async throws -> T?) async rethrows -> [T] {
