@@ -746,9 +746,9 @@ struct JSONComparisonTests {
         #expect(!diff.hasDifferences)
     }
 
-    // MARK: - Tests for includeOnlyInRightLeafFolders
+    // MARK: - Tests for .leafFoldersOnly
 
-    @Test("includeOnlyInRightLeafFolders: finds files only in right leaf directories")
+    @Test(".leafFoldersOnly: finds files only in right leaf directories")
     func leafFoldersOnlyInRight() async throws {
         let leftFiles = [
             "root.txt": "content",
@@ -763,8 +763,9 @@ struct JSONComparisonTests {
             "folder1/file1.txt": "content1",
             "folder1/subfolder/file2.txt": "content2",
             "folder1/subfolder/leaf/file3.txt": "content3",
-            "folder1/subfolder/leaf/extra.txt": "extra",  // Only in right, in leaf dir
             "folder2/leaf/file4.txt": "content4",
+
+            "folder1/subfolder/leaf/extra.txt": "extra",  // Only in right, in leaf dir
             "folder2/leaf/another.txt": "another",  // Only in right, in leaf dir
             "folder2/notleaf/ignored.txt": "ignored",  // Not in a left leaf dir
         ]
@@ -796,7 +797,7 @@ struct JSONComparisonTests {
         #expect(diff.common.contains("folder2/leaf/file4.txt"))
     }
 
-    @Test("includeOnlyInRightLeafFolders: detects modified files in leaf directories")
+    @Test(".leafFoldersOnly: detects modified files in leaf directories")
     func leafFoldersModifiedFiles() async throws {
         let leftFiles = [
             "leaf1/file1.txt": "original",
@@ -833,7 +834,7 @@ struct JSONComparisonTests {
         #expect(diff.common.contains("leaf1/file2.txt"))
     }
 
-    @Test("includeOnlyInRightLeafFolders: ignores non-leaf directories on right")
+    @Test(".leafFoldersOnly: ignores non-leaf directories on right")
     func leafFoldersIgnoresNonLeafDirs() async throws {
         let leftFiles = [
             "leafdir/file1.txt": "content",
@@ -870,7 +871,7 @@ struct JSONComparisonTests {
         #expect(!diff.onlyInRight.contains("newdir/subdir/file4.txt"))
     }
 
-    @Test("includeOnlyInRightLeafFolders: works with empty right leaf directories")
+    @Test(".leafFoldersOnly: works with empty right leaf directories")
     func leafFoldersEmptyRightLeafDirs() async throws {
         let leftFiles = [
             "leaf1/file1.txt": "content",
@@ -902,7 +903,7 @@ struct JSONComparisonTests {
         #expect(diff.common.contains("leaf1/file1.txt"))
     }
 
-    @Test("includeOnlyInRightLeafFolders: complex nested structure")
+    @Test(".leafFoldersOnly: complex nested structure")
     func leafFoldersComplexNested() async throws {
         let leftFiles = [
             "a/b/c/d/file1.txt": "content",  // d is leaf
