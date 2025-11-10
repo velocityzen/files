@@ -25,10 +25,14 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
+        // Create isolated ignore patterns (don't load from home directory)
+        let ignore = Ignore(patterns: ["*.log", "*.tmp"])
+
         let result = try await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
-            mode: .oneWay
+            mode: .oneWay,
+            ignore: ignore
         )
 
         #expect(result.succeeded == 2)
@@ -742,10 +746,14 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
+        // Create isolated ignore patterns (don't load from home directory)
+        let ignore = Ignore(patterns: ["*.log", "*.tmp"])
+
         let result = try await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
-            mode: .oneWay
+            mode: .oneWay,
+            ignore: ignore
         )
 
         // Should copy 2 files (data.txt and config.json), but NOT .filesignore

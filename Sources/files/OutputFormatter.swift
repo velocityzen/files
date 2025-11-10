@@ -13,21 +13,21 @@ enum OutputFormatter {
 
     static func printError(_ error: DirectorySyncError) {
         switch error {
-        case .invalidDirectory(let path):
-            FileHandle.standardError.write(Data("Error: Invalid directory: \(path)\n".utf8))
-        case .accessDenied(let message):
-            FileHandle.standardError.write(Data("Error: Access denied: \(message)\n".utf8))
-        case .operationFailed(let message):
-            FileHandle.standardError.write(Data("Error: Operation failed: \(message)\n".utf8))
+            case .invalidDirectory(let path):
+                FileHandle.standardError.write(Data("Error: Invalid directory: \(path)\n".utf8))
+            case .accessDenied(let message):
+                FileHandle.standardError.write(Data("Error: Access denied: \(message)\n".utf8))
+            case .operationFailed(let message):
+                FileHandle.standardError.write(Data("Error: Operation failed: \(message)\n".utf8))
         }
     }
 
     static func printError(_ error: DirectoryDifferenceError) {
         switch error {
-        case .invalidDirectory(let path):
-            FileHandle.standardError.write(Data("Error: Invalid directory: \(path)\n".utf8))
-        case .accessDenied(let message):
-            FileHandle.standardError.write(Data("Error: Access denied: \(message)\n".utf8))
+            case .invalidDirectory(let path):
+                FileHandle.standardError.write(Data("Error: Invalid directory: \(path)\n".utf8))
+            case .accessDenied(let message):
+                FileHandle.standardError.write(Data("Error: Access denied: \(message)\n".utf8))
         }
     }
 
@@ -37,12 +37,12 @@ enum OutputFormatter {
         result: SyncResult, format: OutputFormat, verbose: Bool, dryRun: Bool
     ) {
         switch format {
-        case .text:
-            printSyncTextFormat(result: result, verbose: verbose, dryRun: dryRun)
-        case .json:
-            printSyncJSONFormat(result: result)
-        case .summary:
-            printSyncSummaryFormat(result: result, dryRun: dryRun)
+            case .text:
+                printSyncTextFormat(result: result, verbose: verbose, dryRun: dryRun)
+            case .json:
+                printSyncJSONFormat(result: result)
+            case .summary:
+                printSyncSummaryFormat(result: result, dryRun: dryRun)
         }
     }
 
@@ -51,15 +51,11 @@ enum OutputFormatter {
             print("✓ No operations needed")
             return
         }
+        let (copies, updates, deletes, infos) = groupOperations(result.operations)
 
         let verb = dryRun ? "Would perform" : "Performed"
-        print("\(verb) \(result.operations.count) operation(s)")
+        print("\(verb) \(result.totalOperations) operation(s)")
         print()
-
-        // Group operations by type
-        let copies = result.operations.filter { $0.type == .copy }
-        let updates = result.operations.filter { $0.type == .update }
-        let deletes = result.operations.filter { $0.type == .delete }
 
         if !copies.isEmpty {
             printOperationList("Copy", operations: copies, verbose: verbose)
@@ -73,6 +69,11 @@ enum OutputFormatter {
 
         if !deletes.isEmpty {
             printOperationList("Delete", operations: deletes, verbose: verbose)
+            print()
+        }
+
+        if !infos.isEmpty {
+            printOperationList("Info", operations: infos, verbose: verbose)
             print()
         }
 
@@ -97,12 +98,14 @@ enum OutputFormatter {
     static func printOperation(_ operation: SyncOperation) {
         let prefix =
             switch operation.type {
-            case .copy:
-                " +"
-            case .delete:
-                " -"
-            case .update:
-                " ^"
+                case .copy:
+                    " +"
+                case .delete:
+                    " -"
+                case .update:
+                    " ^"
+                case .info:
+                    " i"
             }
 
         print("\(prefix) \(operation.relativePath)")
@@ -132,14 +135,13 @@ enum OutputFormatter {
     }
 
     private static func printSyncSummaryFormat(result: SyncResult, dryRun: Bool) {
-        let copies = result.operations.filter { $0.type == .copy }.count
-        let updates = result.operations.filter { $0.type == .update }.count
-        let deletes = result.operations.filter { $0.type == .delete }.count
+        let (copies, updates, deletes, infos) = groupOperations(result.operations)
 
         print("Total operations: \(result.operations.count)")
-        print("Copy: \(copies)")
-        print("Update: \(updates)")
-        print("Delete: \(deletes)")
+        print("Copy: \(copies.count)")
+        print("Update: \(updates.count)")
+        print("Delete: \(deletes.count)")
+        print("Info: \(infos.count)")
 
         if !dryRun {
             print("Succeeded: \(result.succeeded)")
@@ -154,12 +156,12 @@ enum OutputFormatter {
         diff: DirectoryDifference, format: OutputFormat, verbose: Bool
     ) {
         switch format {
-        case .text:
-            printDifferenceTextFormat(diff: diff, verbose: verbose)
-        case .json:
-            printDifferenceJSONFormat(diff: diff)
-        case .summary:
-            printDifferenceSummaryFormat(diff: diff)
+            case .text:
+                printDifferenceTextFormat(diff: diff, verbose: verbose)
+            case .json:
+                printDifferenceJSONFormat(diff: diff)
+            case .summary:
+                printDifferenceSummaryFormat(diff: diff)
         }
     }
 
@@ -249,5 +251,25 @@ enum OutputFormatter {
         {
             print(jsonString)
         }
+    }
+
+    private static func groupOperations(_ operations: [SyncOperation]) -> (
+        copies: [SyncOperation],
+        updates: [SyncOperation],
+        deletes: [SyncOperation],
+        infos: [SyncOperation]
+    ) {
+        let grouped = operations.reduce(
+            into: [SyncOperation.OperationType: [SyncOperation]]()
+        ) { dict, operation in
+            dict[operation.type, default: []].append(operation)
+        }
+
+        return (
+            copies: grouped[.copy] ?? [],
+            updates: grouped[.update] ?? [],
+            deletes: grouped[.delete] ?? [],
+            infos: grouped[.info] ?? []
+        )
     }
 }

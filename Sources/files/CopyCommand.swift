@@ -22,6 +22,11 @@ extension Files {
         @Argument(help: "The destination directory")
         var destinationPath: String
 
+        @Flag(
+            name: .long,
+            help: "Scan leaf directories on the right side for additional diff information")
+        var showMoreRight: Bool = false
+
         @Flag(name: .long, help: "Preview changes without applying them")
         var dryRun: Bool = false
 
@@ -62,6 +67,7 @@ extension Files {
                     mode: .oneWay,
                     recursive: true,
                     deletions: false,
+                    showMoreRight: showMoreRight,
                     dryRun: dryRun,
                     ignore: noIgnore ? Ignore() : nil,
                     progress: progressHandler
@@ -72,7 +78,7 @@ extension Files {
                     await display.complete()
                 }
 
-                printCopyResults(
+                OutputFormatter.printSyncResults(
                     result: result,
                     format: format,
                     verbose: verbose,
@@ -88,71 +94,5 @@ extension Files {
             }
         }
 
-        func printCopyResults(
-            result: SyncResult, format: OutputFormat, verbose: Bool, dryRun: Bool
-        ) {
-            switch format {
-            case .text:
-                printCopyTextFormat(result: result, verbose: verbose, dryRun: dryRun)
-            case .json:
-                OutputFormatter.printSyncResults(
-                    result: result, format: format, verbose: verbose, dryRun: dryRun)
-            case .summary:
-                printCopySummaryFormat(result: result, dryRun: dryRun)
-            }
-        }
-
-        func printCopyTextFormat(result: SyncResult, verbose: Bool, dryRun: Bool) {
-            if result.operations.isEmpty {
-                print("✓ No files need to be copied - destination is up to date")
-                return
-            }
-
-            let verb = dryRun ? "Would copy/update" : "Copied/Updated"
-            print("\(verb) \(result.operations.count) file(s)")
-            print()
-
-            // Group operations by type
-            let copies = result.operations.filter { $0.type == .copy }
-            let updates = result.operations.filter { $0.type == .update }
-
-            if !copies.isEmpty {
-                OutputFormatter.printOperationList(
-                    "New files",
-                    operations: copies,
-                    verbose: verbose
-                )
-                print()
-            }
-
-            if !updates.isEmpty {
-                OutputFormatter.printOperationList(
-                    "Modified files",
-                    operations: updates,
-                    verbose: verbose)
-                print()
-            }
-
-            if !dryRun {
-                print(
-                    "Summary: \(result.succeeded) succeeded, \(result.failed) failed, \(result.skipped) skipped"
-                )
-            }
-        }
-
-        func printCopySummaryFormat(result: SyncResult, dryRun: Bool) {
-            let copies = result.operations.filter { $0.type == .copy }.count
-            let updates = result.operations.filter { $0.type == .update }.count
-
-            print("Total operations: \(result.operations.count)")
-            print("New files: \(copies)")
-            print("Modified files: \(updates)")
-
-            if !dryRun {
-                print("Succeeded: \(result.succeeded)")
-                print("Failed: \(result.failed)")
-                print("Skipped: \(result.skipped)")
-            }
-        }
     }
 }
