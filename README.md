@@ -147,6 +147,7 @@ This is a convenience command equivalent to `files sync --no-deletions` with one
 
 #### Options
 
+- `--show-more-right` - Scan leaf directories on the right side for additional diff information
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
@@ -176,6 +177,7 @@ files sync <source-directory> <destination-directory> [options]
 - `--conflict-resolution STRATEGY` - For two-way sync: `newest` (default), `source`, `destination`, `skip`
 - `--recursive` / `--no-recursive` - Scan subdirectories recursively (default: recursive)
 - `--deletions` - Delete files in destination that don't exist in source (one-way sync only, default: false)
+- `--show-more-right` - Scan leaf directories on the right side for additional diff information (one-way sync without deletions only)
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
