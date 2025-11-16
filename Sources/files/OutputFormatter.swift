@@ -96,7 +96,7 @@ enum OutputFormatter {
     }
 
     static func printOperationList(
-        _ title: String, operations: [SyncOperation], verbose: Bool
+        _ title: String, operations: [FileOperation], verbose: Bool
     ) {
         print("\(title) (\(operations.count))")
         if verbose {
@@ -106,7 +106,7 @@ enum OutputFormatter {
         }
     }
 
-    static func printOperation(_ operation: SyncOperation) {
+    static func printOperation(_ operation: FileOperation) {
         let prefix =
             switch operation.type {
                 case .copy:
@@ -117,7 +117,7 @@ enum OutputFormatter {
                     " ^"
                 case .info:
                     " i"
-                case .initialization:
+                case .compare:
                     " ❌"
             }
 
@@ -275,14 +275,14 @@ enum OutputFormatter {
         }
     }
 
-    private static func groupOperations(_ operations: [SyncOperation]) -> (
-        copies: [SyncOperation],
-        updates: [SyncOperation],
-        deletes: [SyncOperation],
-        infos: [SyncOperation]
+    private static func groupOperations(_ operations: [FileOperation]) -> (
+        copies: [FileOperation],
+        updates: [FileOperation],
+        deletes: [FileOperation],
+        infos: [FileOperation]
     ) {
         let grouped = operations.reduce(
-            into: [SyncOperation.OperationType: [SyncOperation]]()
+            into: [FileOperation.OperationType: [FileOperation]]()
         ) { dict, operation in
             dict[operation.type, default: []].append(operation)
         }

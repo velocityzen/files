@@ -99,17 +99,22 @@ public enum IncludeOnlyInRight: Sendable {
 ///   - recursive: Whether to compare subdirectories recursively (default: true)
 ///   - includeOnlyInRight: Specifies what files from the right directory to include (default: .all)
 ///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
-/// - Returns: A `DirectoryDifference` containing the differences between the directories
-/// - Throws: `DirectoryDifferenceError` if directories are invalid or inaccessible
+/// - Returns: A `Result` containing either the `DirectoryDifference` or a `DirectoryDifferenceError`
 public func directoryDifference(
     left leftPath: String,
     right rightPath: String,
     recursive: Bool = true,
     includeOnlyInRight: IncludeOnlyInRight = .all,
     ignore: Ignore? = nil
-) async throws -> DirectoryDifference {
+) async -> Result<DirectoryDifference, DirectoryDifferenceError> {
     // Validate directories
-    try validateDirectories(leftPath: leftPath, rightPath: rightPath)
+    do {
+        try validateDirectories(leftPath: leftPath, rightPath: rightPath)
+    } catch let error as DirectoryDifferenceError {
+        return .failure(error)
+    } catch {
+        return .failure(.accessDenied("\(error)"))
+    }
 
     // Load ignore patterns
     let patterns =
@@ -117,33 +122,41 @@ public func directoryDifference(
             await Ignore.load(leftPath: leftPath, rightPath: rightPath)
         }
 
-    // Scan left directory
-    let filesLeft = try await scanDirectory(
-        at: leftPath, recursive: recursive, ignore: patterns)
+    // Scan left directory and choose comparison strategy
+    do {
+        let filesLeft = try await scanDirectory(
+            at: leftPath, recursive: recursive, ignore: patterns)
 
-    // Choose the appropriate comparison strategy based on includeOnlyInRight mode
-    return switch includeOnlyInRight {
-        case .all:
-            try await fullComparison(
-                leftPath: leftPath,
-                rightPath: rightPath,
-                filesLeft: filesLeft,
-                recursive: recursive,
-                ignore: patterns
-            )
-        case .none:
-            try await optimizedComparison(
-                leftPath: leftPath,
-                rightPath: rightPath,
-                filesLeft: filesLeft
-            )
-        case .leafFoldersOnly:
-            try await leafFoldersComparison(
-                leftPath: leftPath,
-                rightPath: rightPath,
-                filesLeft: filesLeft,
-                ignore: patterns
-            )
+        // Choose the appropriate comparison strategy based on includeOnlyInRight mode
+        let diff =
+            switch includeOnlyInRight {
+                case .all:
+                    try await fullComparison(
+                        leftPath: leftPath,
+                        rightPath: rightPath,
+                        filesLeft: filesLeft,
+                        recursive: recursive,
+                        ignore: patterns
+                    )
+                case .none:
+                    try await optimizedComparison(
+                        leftPath: leftPath,
+                        rightPath: rightPath,
+                        filesLeft: filesLeft
+                    )
+                case .leafFoldersOnly:
+                    try await leafFoldersComparison(
+                        leftPath: leftPath,
+                        rightPath: rightPath,
+                        filesLeft: filesLeft,
+                        ignore: patterns
+                    )
+            }
+        return .success(diff)
+    } catch let error as DirectoryDifferenceError {
+        return .failure(error)
+    } catch {
+        return .failure(.accessDenied("\(error)"))
     }
 }
 

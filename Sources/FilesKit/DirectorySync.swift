@@ -3,14 +3,34 @@ import Foundation
 let COPY_CHUNK_SIZE = 1024 * 1024
 let MIN_SIZE_TO_CHUNK = COPY_CHUNK_SIZE * 10
 
-/// Represents a sync operation to be performed
-public struct SyncOperation: Sendable {
+/// Extension to simplify error handling in AsyncStream
+extension AsyncStream where Element == OperationResult {
+    /// Creates a stream that yields a single failure result and finishes
+    static func singleFailure(leftPath: String, rightPath: String, error: Error, message: String)
+        -> AsyncStream<OperationResult>
+    {
+        return AsyncStream<OperationResult> { continuation in
+            let compareOp = FileOperation.compareOperation(
+                leftPath: leftPath, rightPath: rightPath, error: message)
+            continuation.yield(
+                .failure(
+                    OperationError(
+                        operation: compareOp,
+                        error: error
+                    )))
+            continuation.finish()
+        }
+    }
+}
+
+/// Represents a file operation to be performed
+public struct FileOperation: Sendable {
     public enum OperationType: Sendable {
         case copy
         case delete
         case update
         case info
-        case initialization  // Special type for initialization errors
+        case compare  // Special type for comparison/validation errors
     }
 
     public let type: OperationType
@@ -18,13 +38,15 @@ public struct SyncOperation: Sendable {
     public let left: String?  // nil for delete operations
     public let right: String
 
-    /// Creates a special initialization operation for representing setup errors
-    public static func initializationOperation(error: String) -> SyncOperation {
-        SyncOperation(
-            type: .initialization,
+    /// Creates a special comparison operation for representing directory comparison errors
+    public static func compareOperation(leftPath: String, rightPath: String, error: String)
+        -> FileOperation
+    {
+        FileOperation(
+            type: .compare,
             relativePath: error,
-            left: nil,
-            right: ""
+            left: leftPath,
+            right: rightPath
         )
     }
 }
@@ -45,13 +67,13 @@ public enum SyncMode: Sendable {
 
 /// Success case for an operation - contains the operation and what was accomplished
 public struct OperationSuccess: Sendable {
-    public let operation: SyncOperation
+    public let operation: FileOperation
     public let bytesTransferred: Int64
 }
 
 /// Failure case for an operation - contains the operation and what went wrong
 public struct OperationError: Error, Sendable {
-    public let operation: SyncOperation
+    public let operation: FileOperation
     public let error: Error
 
     public var localizedDescription: String {
@@ -76,7 +98,7 @@ extension Array where Element == OperationResult {
         }.count
     }
 
-    public var failedOperations: [(operation: SyncOperation, error: Error)] {
+    public var failedOperations: [(operation: FileOperation, error: Error)] {
         compactMap {
             if case .failure(let opError) = $0 {
                 return (opError.operation, opError.error)
@@ -85,7 +107,7 @@ extension Array where Element == OperationResult {
         }
     }
 
-    public var operations: [SyncOperation] {
+    public var operations: [FileOperation] {
         map { result in
             switch result {
                 case .success(let success): return success.operation
@@ -141,38 +163,24 @@ public func directorySync(
                 .all
         }
 
-    let diff: DirectoryDifference
-    do {
-        diff = try await directoryDifference(
-            left: leftPath,
-            right: rightPath,
-            recursive: recursive,
-            includeOnlyInRight: rightMode,
-            ignore: ignore
-        )
-    } catch {
-        // Return a stream with a single initialization error
-        let syncError: DirectorySyncError
-        if let diffError = error as? DirectoryDifferenceError {
-            syncError = DirectorySyncError.from(error: diffError)
-        } else {
-            syncError = error as? DirectorySyncError ?? .operationFailed("\(error)")
-        }
+    let diffResult = await directoryDifference(
+        left: leftPath,
+        right: rightPath,
+        recursive: recursive,
+        includeOnlyInRight: rightMode,
+        ignore: ignore
+    )
 
-        return AsyncStream<OperationResult> { continuation in
-            let initOp = SyncOperation.initializationOperation(error: "\(syncError)")
-            continuation.yield(
-                .failure(
-                    OperationError(
-                        operation: initOp,
-                        error: syncError
-                    )))
-            continuation.finish()
-        }
+    if case .failure(let error) = diffResult {
+        let syncError = DirectorySyncError.from(error: error)
+        return .singleFailure(
+            leftPath: leftPath, rightPath: rightPath, error: syncError, message: "\(syncError)")
     }
 
+    let diff = try! diffResult.get()
+
     // Plan sync operations based on mode
-    let planResult = await planSyncOperations(
+    let planResult = await planFileOperations(
         diff: diff,
         leftPath: leftPath,
         rightPath: rightPath,
@@ -180,30 +188,21 @@ public func directorySync(
         deletions: deletions
     )
 
-    let operations: [SyncOperation]
+    let operations: [FileOperation]
     switch planResult {
         case .success(let ops):
             operations = ops
         case .failure(let error):
-            // Return a stream with a single initialization error
-            return AsyncStream<OperationResult> { continuation in
-                let initOp = SyncOperation.initializationOperation(
-                    error: "Planning failed: \(error)")
-                continuation.yield(
-                    .failure(
-                        OperationError(
-                            operation: initOp,
-                            error: error
-                        )))
-                continuation.finish()
-            }
+            return .singleFailure(
+                leftPath: leftPath, rightPath: rightPath, error: error,
+                message: "Planning failed: \(error)")
     }
 
     var allOperations = operations
     if rightMode == .leafFoldersOnly {
         allOperations += diff.onlyInRight
             .map {
-                createSyncOperation(
+                createFileOperation(
                     type: .info,
                     relativePath: $0,
                     leftBasePath: leftPath,
@@ -232,17 +231,17 @@ public func directorySync(
     }
 
     // Create the stream and execute operations
-    return executeSyncOperationsStream(allOperations)
+    return executeFileOperationsStream(allOperations)
 }
 
 /// Plans sync operations based on the directory difference and sync mode
-private func planSyncOperations(
+private func planFileOperations(
     diff: DirectoryDifference,
     leftPath: String,
     rightPath: String,
     mode: SyncMode,
     deletions: Bool
-) async -> Result<[SyncOperation], DirectorySyncError> {
+) async -> Result<[FileOperation], DirectorySyncError> {
     switch mode {
         case .oneWay:
             return .success(
@@ -259,12 +258,12 @@ private func planSyncOperations(
 }
 
 /// Creates a sync operation by building full paths from base directories and relative path
-private func createSyncOperation(
-    type: SyncOperation.OperationType,
+private func createFileOperation(
+    type: FileOperation.OperationType,
     relativePath: String,
     leftBasePath: String?,
     rightBasePath: String
-) -> SyncOperation {
+) -> FileOperation {
     let left: String? =
         if let leftBasePath {
             URL(fileURLWithPath: leftBasePath)
@@ -278,7 +277,7 @@ private func createSyncOperation(
         .appendingPathComponent(relativePath)
         .path(percentEncoded: false)
 
-    return SyncOperation(
+    return FileOperation(
         type: type,
         relativePath: relativePath,
         left: left,
@@ -292,10 +291,10 @@ private func planOneWaySync(
     leftPath: String,
     rightPath: String,
     deletions: Bool
-) -> [SyncOperation] {
+) -> [FileOperation] {
     // Copy files only in left
     let copyOps = diff.onlyInLeft.map {
-        createSyncOperation(
+        createFileOperation(
             type: .copy,
             relativePath: $0,
             leftBasePath: leftPath,
@@ -307,7 +306,7 @@ private func planOneWaySync(
     let deleteOps =
         deletions
         ? diff.onlyInRight.map {
-            createSyncOperation(
+            createFileOperation(
                 type: .delete,
                 relativePath: $0,
                 leftBasePath: nil,
@@ -317,7 +316,7 @@ private func planOneWaySync(
 
     // Update modified files
     let updateOps = diff.modified.map {
-        createSyncOperation(
+        createFileOperation(
             type: .update,
             relativePath: $0,
             leftBasePath: leftPath,
@@ -334,10 +333,10 @@ private func planTwoWaySync(
     leftPath: String,
     rightPath: String,
     conflictResolution: ConflictResolution
-) async -> Result<[SyncOperation], DirectorySyncError> {
+) async -> Result<[FileOperation], DirectorySyncError> {
     // Copy files only in left to right
     let leftToRightOps = diff.onlyInLeft.map {
-        createSyncOperation(
+        createFileOperation(
             type: .copy,
             relativePath: $0,
             leftBasePath: leftPath,
@@ -347,7 +346,7 @@ private func planTwoWaySync(
 
     // Copy files only in right to left
     let rightToLeftOps = diff.onlyInRight.map {
-        createSyncOperation(
+        createFileOperation(
             type: .copy,
             relativePath: $0,
             leftBasePath: rightPath,
@@ -356,7 +355,7 @@ private func planTwoWaySync(
     }
 
     // Handle modified files based on conflict resolution strategy
-    var conflictOps: [SyncOperation] = []
+    var conflictOps: [FileOperation] = []
     for relativePath in diff.modified {
         let leftFile = URL(fileURLWithPath: leftPath)
             .appendingPathComponent(relativePath)
@@ -394,7 +393,7 @@ private func resolveConflictByNewest(
     relativePath: String,
     leftFile: String,
     rightFile: String
-) async -> Result<SyncOperation?, DirectorySyncError> {
+) async -> Result<FileOperation?, DirectorySyncError> {
     let fileManager = FileManager.default
 
     do {
@@ -411,7 +410,7 @@ private func resolveConflictByNewest(
         if leftDate > rightDate {
             // Left is newer, copy to right
             return .success(
-                SyncOperation(
+                FileOperation(
                     type: .update,
                     relativePath: relativePath,
                     left: leftFile,
@@ -420,7 +419,7 @@ private func resolveConflictByNewest(
         } else if rightDate > leftDate {
             // Right is newer, copy to left
             return .success(
-                SyncOperation(
+                FileOperation(
                     type: .update,
                     relativePath: relativePath,
                     left: rightFile,
@@ -442,14 +441,14 @@ private func resolveConflict(
     leftFile: String,
     rightFile: String,
     resolution: ConflictResolution
-) async -> Result<SyncOperation?, DirectorySyncError> {
+) async -> Result<FileOperation?, DirectorySyncError> {
     switch resolution {
         case .skip:
             return .success(nil)
 
         case .keepLeft:
             return .success(
-                SyncOperation(
+                FileOperation(
                     type: .update,
                     relativePath: relativePath,
                     left: leftFile,
@@ -458,7 +457,7 @@ private func resolveConflict(
 
         case .keepRight:
             return .success(
-                SyncOperation(
+                FileOperation(
                     type: .update,
                     relativePath: relativePath,
                     left: rightFile,
@@ -495,54 +494,23 @@ private actor ProgressTracker {
 }
 
 /// Executes sync operations and returns a stream of operation results
-private func executeSyncOperationsStream(
-    _ operations: [SyncOperation]
+private func executeFileOperationsStream(
+    _ operations: [FileOperation]
 ) -> AsyncStream<OperationResult> {
-    return AsyncStream<OperationResult> { continuation in
-        Task {
-            await executeSyncOperations(operations, continuation: continuation)
+    AsyncStream<OperationResult> { continuation in
+        defer {
+            continuation.finish()
         }
-    }
-}
 
-/// Executes a list of sync operations and yields results to the stream
-private func executeSyncOperations(
-    _ operations: [SyncOperation],
-    continuation: AsyncStream<OperationResult>.Continuation
-) async {
-    let operationsToRun = operations.filter { $0.type != .info }
-
-    defer {
-        // Always finish the continuation when done
-        continuation.finish()
-    }
-
-    for operation in operationsToRun {
-        do {
-            // Execute the operation without progress callbacks
-            let bytesTransferred = try await executeSyncOperation(operation, progressCallback: nil)
-
-            // Yield success result to stream
-            continuation.yield(
-                .success(
-                    OperationSuccess(
-                        operation: operation,
-                        bytesTransferred: bytesTransferred
-                    )))
-        } catch {
-            // Yield failure result to stream
-            continuation.yield(
-                .failure(
-                    OperationError(
-                        operation: operation,
-                        error: error
-                    )))
+        let operationsToRun = operations.filter { $0.type != .info }
+        for operation in operationsToRun {
+            executeFileOperation(operation, with: continuation)
         }
     }
 }
 
 /// Gets the size of a single operation
-private func getOperationSize(_ operation: SyncOperation) -> Int64 {
+private func getOperationSize(_ operation: FileOperation) -> Int64 {
     guard let sourcePath = operation.left else { return 0 }
     guard let attrs = try? FileManager.default.attributesOfItem(atPath: sourcePath) else {
         return 0
@@ -551,7 +519,7 @@ private func getOperationSize(_ operation: SyncOperation) -> Int64 {
 }
 
 /// Calculates total bytes to transfer for all operations
-private func calculateTotalBytes(_ operations: [SyncOperation]) async -> Int64 {
+private func calculateTotalBytes(_ operations: [FileOperation]) async -> Int64 {
     await withTaskGroup(of: Int64.self) { group in
         for operation in operations {
             group.addTask {
@@ -570,70 +538,83 @@ private func calculateTotalBytes(_ operations: [SyncOperation]) async -> Int64 {
     }
 }
 
-/// Executes a single sync operation
-/// - Parameters:
-///   - operation: The operation to execute
-///   - progressCallback: Optional callback to report progress during file transfer
-/// - Returns: Size of the file in bytes (0 for deletions)
-@concurrent
-private func executeSyncOperation(
-    _ operation: SyncOperation,
-    progressCallback: (@Sendable (Int64) -> Void)? = nil
-) async throws -> Int64 {
-    try await Task.detached {
+private func executeFileOperation(
+    _ operation: FileOperation,
+    with continuation: AsyncStream<OperationResult>.Continuation
+) {
+    Task.detached {
         let fileManager = FileManager.default
 
-        switch operation.type {
-            case .copy, .update:
-                guard let left = operation.left else {
-                    throw DirectorySyncError.operationFailed("No left for copy/update operation")
-                }
+        do {
+            switch operation.type {
+                case .copy, .update:
+                    guard let left = operation.left else {
+                        throw DirectorySyncError.operationFailed(
+                            "No left for copy/update operation")
+                    }
 
-                // Get file size
-                let attrs = try fileManager.attributesOfItem(atPath: left)
-                let fileSize = (attrs[.size] as? Int64) ?? 0
+                    // Get file size
+                    let attrs = try fileManager.attributesOfItem(atPath: left)
+                    let fileSize = (attrs[.size] as? Int64) ?? 0
 
-                // Create right directory if needed
-                let rightURL = URL(fileURLWithPath: operation.right)
-                let rightDir = rightURL.deletingLastPathComponent()
-                try fileManager.createDirectory(
-                    at: rightDir,
-                    withIntermediateDirectories: true,
-                    attributes: nil
-                )
-
-                // Copy file (will overwrite if exists for update operations)
-                if fileManager.fileExists(atPath: operation.right) {
-                    try fileManager.removeItem(atPath: operation.right)
-                }
-
-                // For small files or when no progress callback, use simple copy
-                if fileSize < MIN_SIZE_TO_CHUNK || progressCallback == nil {
-                    try fileManager.copyItem(atPath: left, toPath: operation.right)
-                } else {
-                    // For larger files with progress tracking, use chunked copy
-                    try copyFileWithProgress(
-                        from: left,
-                        to: operation.right,
-                        fileSize: fileSize,
-                        progressCallback: progressCallback
+                    // Create right directory if needed
+                    let rightURL = URL(fileURLWithPath: operation.right)
+                    let rightDir = rightURL.deletingLastPathComponent()
+                    try fileManager.createDirectory(
+                        at: rightDir,
+                        withIntermediateDirectories: true,
+                        attributes: nil
                     )
-                }
 
-                return fileSize
+                    // Copy file (will overwrite if exists for update operations)
+                    if fileManager.fileExists(atPath: operation.right) {
+                        try fileManager.removeItem(atPath: operation.right)
+                    }
 
-            case .delete:
-                // Delete file
-                if fileManager.fileExists(atPath: operation.right) {
-                    try fileManager.removeItem(atPath: operation.right)
-                }
-                return 0
+                    // For small files or when no progress callback, use simple copy
+                    if fileSize < MIN_SIZE_TO_CHUNK {
+                        try fileManager.copyItem(atPath: left, toPath: operation.right)
+                    } else {
+                        // For larger files with progress tracking, use chunked copy
+                        try copyFileWithProgress(
+                            from: left,
+                            to: operation.right,
+                            fileSize: fileSize,
+                            progressCallback: nil
+                        )
+                    }
 
-            case .info, .initialization:
-                // These operation types should not be executed
-                throw DirectorySyncError.operationFailed("Unsupported operation type")
+                    continuation.yield(
+                        .success(
+                            OperationSuccess(
+                                operation: operation,
+                                bytesTransferred: fileSize
+                            )))
+
+                case .delete:
+                    if fileManager.fileExists(atPath: operation.right) {
+                        try fileManager.removeItem(atPath: operation.right)
+                    }
+                    continuation.yield(
+                        .success(
+                            OperationSuccess(
+                                operation: operation,
+                                bytesTransferred: 0
+                            )))
+
+                case .info, .compare:
+                    // These operation types should not be executed
+                    throw DirectorySyncError.operationFailed("Unsupported operation type")
+            }
+        } catch {
+            continuation.yield(
+                .failure(
+                    OperationError(
+                        operation: operation,
+                        error: error
+                    )))
         }
-    }.value
+    }
 }
 
 /// Copies a file with progress reporting

@@ -793,7 +793,7 @@ struct DirectorySyncTests {
 
         // Should be a failure with initialization operation
         if case .failure(let opError) = results.first {
-            #expect(opError.operation.type == .initialization)
+            #expect(opError.operation.type == .compare)
         } else {
             Issue.record("Expected initialization error")
         }
@@ -823,7 +823,7 @@ struct DirectorySyncTests {
 
         // Should be a failure with initialization operation
         if case .failure(let opError) = results.first {
-            #expect(opError.operation.type == .initialization)
+            #expect(opError.operation.type == .compare)
         } else {
             Issue.record("Expected initialization error")
         }

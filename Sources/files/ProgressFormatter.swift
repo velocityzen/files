@@ -6,7 +6,7 @@ actor ProgressFormatter {
     private var lastUpdateTime: Date = Date()
     private let updateInterval: TimeInterval = 0.1  // Update every 100ms
     private var lastCompletedCount = 0
-    private var lastOperation: SyncOperation? = nil
+    private var lastOperation: FileOperation? = nil
 
     func display(_ progress: SyncProgress) {
         // Check if a file just completed
