@@ -115,14 +115,16 @@ public func directorySync(
     )
 
     if rightMode == .leafFoldersOnly {
-        operations += diff.onlyInRight.map {
-            createSyncOperation(
-                type: .info,
-                relativePath: $0,
-                leftBasePath: leftPath,
-                rightBasePath: rightPath
-            )
-        }
+        operations += diff.onlyInRight
+            .map {
+                createSyncOperation(
+                    type: .info,
+                    relativePath: $0,
+                    leftBasePath: leftPath,
+                    rightBasePath: rightPath
+                )
+            }
+            .sorted { $0.relativePath < $1.relativePath }
     }
 
     // Execute operations if not in dry-run mode
