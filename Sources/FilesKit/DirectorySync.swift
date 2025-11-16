@@ -3,27 +3,6 @@ import Foundation
 let COPY_CHUNK_SIZE = 1024 * 1024
 let MIN_SIZE_TO_CHUNK = COPY_CHUNK_SIZE * 10
 
-/// Extension to simplify error handling in AsyncStream
-extension AsyncStream where Element == OperationResult {
-    /// Creates a stream that yields a single failure result and finishes
-    static func singleFailure(leftPath: String, rightPath: String, error: Error, message: String)
-        -> AsyncStream<OperationResult>
-    {
-        return AsyncStream<OperationResult> { continuation in
-            let compareOp = FileOperation.compareOperation(
-                leftPath: leftPath, rightPath: rightPath, error: message)
-            continuation.yield(
-                .failure(
-                    OperationError(
-                        operation: compareOp,
-                        error: error
-                    )))
-            continuation.finish()
-        }
-    }
-}
-
-/// Represents a file operation to be performed
 public struct FileOperation: Sendable {
     public enum OperationType: Sendable {
         case copy
@@ -59,19 +38,16 @@ public enum ConflictResolution: Sendable {
     case skip
 }
 
-/// Sync mode
 public enum SyncMode: Sendable {
     case oneWay
     case twoWay(conflictResolution: ConflictResolution)
 }
 
-/// Success case for an operation - contains the operation and what was accomplished
 public struct OperationSuccess: Sendable {
     public let operation: FileOperation
     public let bytesTransferred: Int64
 }
 
-/// Failure case for an operation - contains the operation and what went wrong
 public struct OperationError: Error, Sendable {
     public let operation: FileOperation
     public let error: Error
@@ -83,39 +59,6 @@ public struct OperationError: Error, Sendable {
 
 /// The result type for a single operation
 public typealias OperationResult = Result<OperationSuccess, OperationError>
-
-/// Helper extensions for working with operation results
-extension Array where Element == OperationResult {
-    public var succeeded: Int {
-        filter {
-            if case .success = $0 { return true }; return false
-        }.count
-    }
-
-    public var failed: Int {
-        filter {
-            if case .failure = $0 { return true }; return false
-        }.count
-    }
-
-    public var failedOperations: [(operation: FileOperation, error: Error)] {
-        compactMap {
-            if case .failure(let opError) = $0 {
-                return (opError.operation, opError.error)
-            }
-            return nil
-        }
-    }
-
-    public var operations: [FileOperation] {
-        map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-    }
-}
 
 public enum DirectorySyncError: Error, Sendable {
     case invalidDirectory(String)
@@ -173,8 +116,12 @@ public func directorySync(
 
     if case .failure(let error) = diffResult {
         let syncError = DirectorySyncError.from(error: error)
-        return .singleFailure(
-            leftPath: leftPath, rightPath: rightPath, error: syncError, message: "\(syncError)")
+        return .fastFail(
+            leftPath: leftPath,
+            rightPath: rightPath,
+            error: syncError,
+            message: "\(syncError)"
+        )
     }
 
     let diff = try! diffResult.get()
@@ -188,19 +135,16 @@ public func directorySync(
         deletions: deletions
     )
 
-    let operations: [FileOperation]
-    switch planResult {
-        case .success(let ops):
-            operations = ops
-        case .failure(let error):
-            return .singleFailure(
-                leftPath: leftPath, rightPath: rightPath, error: error,
-                message: "Planning failed: \(error)")
+    if case .failure(let error) = planResult {
+        return .fastFail(
+            leftPath: leftPath, rightPath: rightPath, error: error,
+            message: "Planning failed: \(error)")
     }
 
-    var allOperations = operations
+    var operations = try! planResult.get()
+
     if rightMode == .leafFoldersOnly {
-        allOperations += diff.onlyInRight
+        operations += diff.onlyInRight
             .map {
                 createFileOperation(
                     type: .info,
@@ -212,26 +156,11 @@ public func directorySync(
             .sorted { $0.relativePath < $1.relativePath }
     }
 
-    // Execute operations if not in dry-run mode
     if dryRun {
-        // For dry-run, return a stream that yields success results for all planned operations
-        // without actually executing them
-        return AsyncStream<OperationResult> { continuation in
-            let operationsToRun = allOperations.filter { $0.type != .info }
-            for operation in operationsToRun {
-                continuation.yield(
-                    .success(
-                        OperationSuccess(
-                            operation: operation,
-                            bytesTransferred: 0  // No bytes transferred in dry-run
-                        )))
-            }
-            continuation.finish()
-        }
+        return .flush(operations: operations)
     }
 
-    // Create the stream and execute operations
-    return executeFileOperationsStream(allOperations)
+    return executeFileOperationsStream(operations)
 }
 
 /// Plans sync operations based on the directory difference and sync mode
@@ -498,14 +427,22 @@ private func executeFileOperationsStream(
     _ operations: [FileOperation]
 ) -> AsyncStream<OperationResult> {
     AsyncStream<OperationResult> { continuation in
-        defer {
-            continuation.finish()
+        Task {
+            await executeFileOperations(operations, with: continuation)
         }
+    }
+}
 
-        let operationsToRun = operations.filter { $0.type != .info }
-        for operation in operationsToRun {
-            executeFileOperation(operation, with: continuation)
-        }
+private func executeFileOperations(
+    _ operations: [FileOperation],
+    with continuation: AsyncStream<OperationResult>.Continuation
+) async {
+    defer {
+        continuation.finish()
+    }
+
+    for operation in operations {
+        await executeFileOperation(operation, with: continuation)
     }
 }
 
@@ -541,96 +478,101 @@ private func calculateTotalBytes(_ operations: [FileOperation]) async -> Int64 {
 private func executeFileOperation(
     _ operation: FileOperation,
     with continuation: AsyncStream<OperationResult>.Continuation
-) {
-    Task.detached {
-        let fileManager = FileManager.default
+) async {
+    await Task.detached {
+        switch operation.type {
+            case .copy, .update:
+                await copyOperation(for: operation, with: continuation)
 
-        do {
-            switch operation.type {
-                case .copy, .update:
-                    guard let left = operation.left else {
-                        throw DirectorySyncError.operationFailed(
-                            "No left for copy/update operation")
-                    }
+            case .delete:
+                let result = deleteOperation(for: operation)
+                continuation.yield(result)
 
-                    // Get file size
-                    let attrs = try fileManager.attributesOfItem(atPath: left)
-                    let fileSize = (attrs[.size] as? Int64) ?? 0
-
-                    // Create right directory if needed
-                    let rightURL = URL(fileURLWithPath: operation.right)
-                    let rightDir = rightURL.deletingLastPathComponent()
-                    try fileManager.createDirectory(
-                        at: rightDir,
-                        withIntermediateDirectories: true,
-                        attributes: nil
-                    )
-
-                    // Copy file (will overwrite if exists for update operations)
-                    if fileManager.fileExists(atPath: operation.right) {
-                        try fileManager.removeItem(atPath: operation.right)
-                    }
-
-                    // For small files or when no progress callback, use simple copy
-                    if fileSize < MIN_SIZE_TO_CHUNK {
-                        try fileManager.copyItem(atPath: left, toPath: operation.right)
-                    } else {
-                        // For larger files with progress tracking, use chunked copy
-                        try copyFileWithProgress(
-                            from: left,
-                            to: operation.right,
-                            fileSize: fileSize,
-                            progressCallback: nil
-                        )
-                    }
-
-                    continuation.yield(
-                        .success(
-                            OperationSuccess(
-                                operation: operation,
-                                bytesTransferred: fileSize
-                            )))
-
-                case .delete:
-                    if fileManager.fileExists(atPath: operation.right) {
-                        try fileManager.removeItem(atPath: operation.right)
-                    }
-                    continuation.yield(
-                        .success(
-                            OperationSuccess(
-                                operation: operation,
-                                bytesTransferred: 0
-                            )))
-
-                case .info, .compare:
-                    // These operation types should not be executed
-                    throw DirectorySyncError.operationFailed("Unsupported operation type")
-            }
-        } catch {
-            continuation.yield(
-                .failure(
-                    OperationError(
-                        operation: operation,
-                        error: error
-                    )))
+            case .info, .compare:
+                // just forward operations
+                continuation.success(operation: operation, bytesTransferred: 0)
         }
+    }.value
+}
+
+private func copyOperation(
+    for operation: FileOperation,
+    with continuation: AsyncStream<OperationResult>.Continuation
+) async {
+    guard let left = operation.left else {
+        return continuation.failure(
+            operation: operation,
+            error: DirectorySyncError.operationFailed("No left for copy/update operation")
+        )
+    }
+
+    do {
+        // Get file size
+        let attrs = try FileManager.default.attributesOfItem(atPath: left)
+        let fileSize = (attrs[.size] as? Int64) ?? 0
+
+        // Create right directory if needed
+        let rightURL = URL(fileURLWithPath: operation.right)
+        let rightDir = rightURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: rightDir,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+
+        // Copy file (will overwrite if exists for update operations)
+        if FileManager.default.fileExists(atPath: operation.right) {
+            try FileManager.default.removeItem(atPath: operation.right)
+        }
+
+        if fileSize < MIN_SIZE_TO_CHUNK {
+            // For small files, use simple copy
+            try FileManager.default.copyItem(atPath: left, toPath: operation.right)
+            continuation.success(operation: operation, bytesTransferred: fileSize)
+        } else {
+            copyFileWithProgress(
+                operation: operation,
+                expectedFileSize: fileSize,
+                continuation: continuation
+            )
+        }
+    } catch {
+        return continuation.failure(operation: operation, error: error)
     }
 }
 
-/// Copies a file with progress reporting
+private func deleteOperation(for operation: FileOperation) -> OperationResult {
+    do {
+        if FileManager.default.fileExists(atPath: operation.right) {
+            try FileManager.default.removeItem(atPath: operation.right)
+        }
+
+        return .success(OperationSuccess(operation: operation, bytesTransferred: 0))
+    } catch {
+        return .failure(OperationError(operation: operation, error: error))
+    }
+}
+
+/// Copies a file with progress reporting via the stream continuation
 internal func copyFileWithProgress(
-    from source: String,
-    to destination: String,
-    fileSize: Int64,
-    progressCallback: (@Sendable (Int64) -> Void)?
-) throws {
+    operation: FileOperation,
+    expectedFileSize: Int64,
+    continuation: AsyncStream<OperationResult>.Continuation
+) {
     let bufferSize = COPY_CHUNK_SIZE
 
-    guard let inputStream = InputStream(fileAtPath: source) else {
-        throw DirectorySyncError.operationFailed("Failed to open source file")
+    // we check that file exists vefore calling this function
+    guard let inputStream = InputStream(fileAtPath: operation.left!) else {
+        return continuation.failure(
+            operation: operation,
+            error: DirectorySyncError.operationFailed("Failed to open source file")
+        )
     }
-    guard let outputStream = OutputStream(toFileAtPath: destination, append: false) else {
-        throw DirectorySyncError.operationFailed("Failed to create destination file")
+    guard let outputStream = OutputStream(toFileAtPath: operation.right, append: false) else {
+        return continuation.failure(
+            operation: operation,
+            error: DirectorySyncError.operationFailed("Failed to create destination file")
+        )
     }
 
     inputStream.open()
@@ -648,7 +590,10 @@ internal func copyFileWithProgress(
         let bytesRead = inputStream.read(&buffer, maxLength: bufferSize)
 
         if bytesRead < 0 {
-            throw DirectorySyncError.operationFailed("Failed to read from source file")
+            return continuation.failure(
+                operation: operation,
+                error: DirectorySyncError.operationFailed("Failed to read from source file")
+            )
         }
 
         if bytesRead == 0 {
@@ -657,10 +602,23 @@ internal func copyFileWithProgress(
 
         let bytesWritten = outputStream.write(buffer, maxLength: bytesRead)
         if bytesWritten != bytesRead {
-            throw DirectorySyncError.operationFailed("Failed to write to destination file")
+            return continuation.failure(
+                operation: operation,
+                error: DirectorySyncError.operationFailed("Failed to write to destination file")
+            )
         }
 
         totalBytesRead += Int64(bytesRead)
-        progressCallback?(totalBytesRead)
+
+        // Yield progress update to the stream
+        continuation.success(operation: operation, bytesTransferred: totalBytesRead)
+    }
+
+    if totalBytesRead != expectedFileSize {
+        return continuation.failure(
+            operation: operation,
+            error: DirectorySyncError.operationFailed(
+                "Transferred \(totalBytesRead) bytes, expected \(expectedFileSize)")
+        )
     }
 }
