@@ -10,12 +10,23 @@ public struct SyncOperation: Sendable {
         case delete
         case update
         case info
+        case initialization  // Special type for initialization errors
     }
 
     public let type: OperationType
     public let relativePath: String
     public let left: String?  // nil for delete operations
     public let right: String
+
+    /// Creates a special initialization operation for representing setup errors
+    public static func initializationOperation(error: String) -> SyncOperation {
+        SyncOperation(
+            type: .initialization,
+            relativePath: error,
+            left: nil,
+            right: ""
+        )
+    }
 }
 
 /// Conflict resolution strategy for two-way sync
@@ -32,15 +43,55 @@ public enum SyncMode: Sendable {
     case twoWay(conflictResolution: ConflictResolution)
 }
 
-/// Result of a sync operation
-public struct SyncResult: Sendable {
-    public let operations: [SyncOperation]
-    public let succeeded: Int
-    public let failed: Int
-    public let skipped: Int
+/// Success case for an operation - contains the operation and what was accomplished
+public struct OperationSuccess: Sendable {
+    public let operation: SyncOperation
+    public let bytesTransferred: Int64
+}
 
-    public var totalOperations: Int {
-        succeeded + failed + skipped
+/// Failure case for an operation - contains the operation and what went wrong
+public struct OperationError: Error, Sendable {
+    public let operation: SyncOperation
+    public let error: Error
+
+    public var localizedDescription: String {
+        "\(error.localizedDescription)"
+    }
+}
+
+/// The result type for a single operation
+public typealias OperationResult = Result<OperationSuccess, OperationError>
+
+/// Helper extensions for working with operation results
+extension Array where Element == OperationResult {
+    public var succeeded: Int {
+        filter {
+            if case .success = $0 { return true }; return false
+        }.count
+    }
+
+    public var failed: Int {
+        filter {
+            if case .failure = $0 { return true }; return false
+        }.count
+    }
+
+    public var failedOperations: [(operation: SyncOperation, error: Error)] {
+        compactMap {
+            if case .failure(let opError) = $0 {
+                return (opError.operation, opError.error)
+            }
+            return nil
+        }
+    }
+
+    public var operations: [SyncOperation] {
+        map { result in
+            switch result {
+                case .success(let success): return success.operation
+                case .failure(let failure): return failure.operation
+            }
+        }
     }
 }
 
@@ -70,9 +121,8 @@ public enum DirectorySyncError: Error, Sendable {
 ///   - showMoreRight: If true, scan leaf directories on the right side for additional diff information (one-way sync without deletions only, default: false)
 ///   - dryRun: If true, only plan operations without executing them (default: false)
 ///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
-///   - progress: Optional progress callback to receive real-time updates (default: nil)
-/// - Returns: A `SyncResult` containing the operations performed and their results
-/// - Throws: `DirectorySyncError` if directories are invalid or operations fail
+/// - Returns: An AsyncStream that yields OperationResult for each completed operation
+/// - Note: If directory validation fails, the stream will yield a single initialization error and finish
 public func directorySync(
     left leftPath: String,
     right rightPath: String,
@@ -81,9 +131,8 @@ public func directorySync(
     deletions: Bool = false,
     showMoreRight: Bool = false,
     dryRun: Bool = false,
-    ignore: Ignore? = nil,
-    progress: ProgressHandler? = nil
-) async throws -> SyncResult {
+    ignore: Ignore? = nil
+) async -> AsyncStream<OperationResult> {
     let rightMode: IncludeOnlyInRight =
         switch mode {
             case .oneWay:
@@ -101,12 +150,29 @@ public func directorySync(
             includeOnlyInRight: rightMode,
             ignore: ignore
         )
-    } catch let error as DirectoryDifferenceError {
-        throw DirectorySyncError.from(error: error)
+    } catch {
+        // Return a stream with a single initialization error
+        let syncError: DirectorySyncError
+        if let diffError = error as? DirectoryDifferenceError {
+            syncError = DirectorySyncError.from(error: diffError)
+        } else {
+            syncError = error as? DirectorySyncError ?? .operationFailed("\(error)")
+        }
+
+        return AsyncStream<OperationResult> { continuation in
+            let initOp = SyncOperation.initializationOperation(error: "\(syncError)")
+            continuation.yield(
+                .failure(
+                    OperationError(
+                        operation: initOp,
+                        error: syncError
+                    )))
+            continuation.finish()
+        }
     }
 
     // Plan sync operations based on mode
-    var operations = try await planSyncOperations(
+    let planResult = await planSyncOperations(
         diff: diff,
         leftPath: leftPath,
         rightPath: rightPath,
@@ -114,8 +180,28 @@ public func directorySync(
         deletions: deletions
     )
 
+    let operations: [SyncOperation]
+    switch planResult {
+        case .success(let ops):
+            operations = ops
+        case .failure(let error):
+            // Return a stream with a single initialization error
+            return AsyncStream<OperationResult> { continuation in
+                let initOp = SyncOperation.initializationOperation(
+                    error: "Planning failed: \(error)")
+                continuation.yield(
+                    .failure(
+                        OperationError(
+                            operation: initOp,
+                            error: error
+                        )))
+                continuation.finish()
+            }
+    }
+
+    var allOperations = operations
     if rightMode == .leafFoldersOnly {
-        operations += diff.onlyInRight
+        allOperations += diff.onlyInRight
             .map {
                 createSyncOperation(
                     type: .info,
@@ -129,15 +215,24 @@ public func directorySync(
 
     // Execute operations if not in dry-run mode
     if dryRun {
-        return SyncResult(
-            operations: operations,
-            succeeded: 0,
-            failed: 0,
-            skipped: operations.count
-        )
+        // For dry-run, return a stream that yields success results for all planned operations
+        // without actually executing them
+        return AsyncStream<OperationResult> { continuation in
+            let operationsToRun = allOperations.filter { $0.type != .info }
+            for operation in operationsToRun {
+                continuation.yield(
+                    .success(
+                        OperationSuccess(
+                            operation: operation,
+                            bytesTransferred: 0  // No bytes transferred in dry-run
+                        )))
+            }
+            continuation.finish()
+        }
     }
 
-    return try await executeSyncOperations(operations, progress: progress)
+    // Create the stream and execute operations
+    return executeSyncOperationsStream(allOperations)
 }
 
 /// Plans sync operations based on the directory difference and sync mode
@@ -147,13 +242,14 @@ private func planSyncOperations(
     rightPath: String,
     mode: SyncMode,
     deletions: Bool
-) async throws -> [SyncOperation] {
+) async -> Result<[SyncOperation], DirectorySyncError> {
     switch mode {
         case .oneWay:
-            return planOneWaySync(
-                diff: diff, leftPath: leftPath, rightPath: rightPath, deletions: deletions)
+            return .success(
+                planOneWaySync(
+                    diff: diff, leftPath: leftPath, rightPath: rightPath, deletions: deletions))
         case .twoWay(let conflictResolution):
-            return try await planTwoWaySync(
+            return await planTwoWaySync(
                 diff: diff,
                 leftPath: leftPath,
                 rightPath: rightPath,
@@ -238,7 +334,7 @@ private func planTwoWaySync(
     leftPath: String,
     rightPath: String,
     conflictResolution: ConflictResolution
-) async throws -> [SyncOperation] {
+) async -> Result<[SyncOperation], DirectorySyncError> {
     // Copy files only in left to right
     let leftToRightOps = diff.onlyInLeft.map {
         createSyncOperation(
@@ -260,24 +356,82 @@ private func planTwoWaySync(
     }
 
     // Handle modified files based on conflict resolution strategy
-    let conflictOps = try await diff.modified.asyncCompactMap {
+    var conflictOps: [SyncOperation] = []
+    for relativePath in diff.modified {
         let leftFile = URL(fileURLWithPath: leftPath)
-            .appendingPathComponent($0)
+            .appendingPathComponent(relativePath)
             .path(percentEncoded: false)
         let rightFile = URL(fileURLWithPath: rightPath)
-            .appendingPathComponent($0)
+            .appendingPathComponent(relativePath)
             .path(percentEncoded: false)
 
-        return try await resolveConflict(
-            relativePath: $0,
+        let result = await resolveConflict(
+            relativePath: relativePath,
             leftFile: leftFile,
             rightFile: rightFile,
             resolution: conflictResolution
         )
+
+        switch result {
+            case .success(let operation):
+                if let operation = operation {
+                    conflictOps.append(operation)
+                }
+            case .failure(let error):
+                return .failure(error)
+        }
     }
 
-    return (leftToRightOps + rightToLeftOps + conflictOps).sorted {
-        $0.relativePath < $1.relativePath
+    return .success(
+        (leftToRightOps + rightToLeftOps + conflictOps).sorted {
+            $0.relativePath < $1.relativePath
+        })
+}
+
+/// Resolves a conflict between two modified files based on modification dates
+@concurrent
+private func resolveConflictByNewest(
+    relativePath: String,
+    leftFile: String,
+    rightFile: String
+) async -> Result<SyncOperation?, DirectorySyncError> {
+    let fileManager = FileManager.default
+
+    do {
+        let leftAttrs = try fileManager.attributesOfItem(atPath: leftFile)
+        let rightAttrs = try fileManager.attributesOfItem(atPath: rightFile)
+
+        guard let leftDate = leftAttrs[.modificationDate] as? Date,
+            let rightDate = rightAttrs[.modificationDate] as? Date
+        else {
+            // If we can't determine dates, skip
+            return .success(nil)
+        }
+
+        if leftDate > rightDate {
+            // Left is newer, copy to right
+            return .success(
+                SyncOperation(
+                    type: .update,
+                    relativePath: relativePath,
+                    left: leftFile,
+                    right: rightFile
+                ))
+        } else if rightDate > leftDate {
+            // Right is newer, copy to left
+            return .success(
+                SyncOperation(
+                    type: .update,
+                    relativePath: relativePath,
+                    left: rightFile,
+                    right: leftFile
+                ))
+        } else {
+            // Same modification time, skip
+            return .success(nil)
+        }
+    } catch {
+        return .failure(.accessDenied("Failed to read file attributes: \(error)"))
     }
 }
 
@@ -288,59 +442,35 @@ private func resolveConflict(
     leftFile: String,
     rightFile: String,
     resolution: ConflictResolution
-) async throws -> SyncOperation? {
+) async -> Result<SyncOperation?, DirectorySyncError> {
     switch resolution {
         case .skip:
-            return nil
+            return .success(nil)
 
         case .keepLeft:
-            return SyncOperation(
-                type: .update,
-                relativePath: relativePath,
-                left: leftFile,
-                right: rightFile
-            )
-
-        case .keepRight:
-            return SyncOperation(
-                type: .update,
-                relativePath: relativePath,
-                left: rightFile,
-                right: leftFile
-            )
-
-        case .keepNewest:
-            let fileManager = FileManager.default
-            let leftAttrs = try fileManager.attributesOfItem(atPath: leftFile)
-            let rightAttrs = try fileManager.attributesOfItem(atPath: rightFile)
-
-            guard let leftDate = leftAttrs[.modificationDate] as? Date,
-                let rightDate = rightAttrs[.modificationDate] as? Date
-            else {
-                // If we can't determine dates, skip
-                return nil
-            }
-
-            if leftDate > rightDate {
-                // Left is newer, copy to right
-                return SyncOperation(
+            return .success(
+                SyncOperation(
                     type: .update,
                     relativePath: relativePath,
                     left: leftFile,
                     right: rightFile
-                )
-            } else if rightDate > leftDate {
-                // Right is newer, copy to left
-                return SyncOperation(
+                ))
+
+        case .keepRight:
+            return .success(
+                SyncOperation(
                     type: .update,
                     relativePath: relativePath,
                     left: rightFile,
                     right: leftFile
-                )
-            } else {
-                // Same modification time, skip
-                return nil
-            }
+                ))
+
+        case .keepNewest:
+            return await resolveConflictByNewest(
+                relativePath: relativePath,
+                leftFile: leftFile,
+                rightFile: rightFile
+            )
     }
 }
 
@@ -364,74 +494,51 @@ private actor ProgressTracker {
     }
 }
 
-/// Executes a list of sync operations
-private func executeSyncOperations(
-    _ operations: [SyncOperation],
-    progress: ProgressHandler? = nil
-) async throws -> SyncResult {
-    var succeeded = 0
-    var failed = 0
-    let skipped = 0
-    let operationsToRun = operations.filter { $0.type != .info }
-
-    // Calculate total bytes if progress tracking is enabled
-    let totalBytes = await calculateTotalBytes(operationsToRun)
-    let tracker = ProgressTracker()
-
-    for (index, operation) in operationsToRun.enumerated() {
-        do {
-            // Get file size before executing operation
-            let fileSize = getOperationSize(operation)
-
-            let actualSize = try await executeSyncOperation(operation) { currentBytes in
-                Task {
-                    // Report progress during file transfer
-                    let bytesPerSecond = await tracker.calculateSpeed(adding: currentBytes)
-                    let totalTransferred = await tracker.totalBytesTransferred
-
-                    progress?(
-                        SyncProgress(
-                            currentOperation: operation,
-                            completedOperations: index,
-                            totalOperations: operationsToRun.count,
-                            currentFileBytes: currentBytes,
-                            currentFileTotalBytes: fileSize,
-                            totalBytesTransferred: totalTransferred + currentBytes,
-                            totalBytes: totalBytes,
-                            bytesPerSecond: bytesPerSecond
-                        ))
-                }
-            }
-
-            await tracker.addBytes(actualSize)
-            succeeded += 1
-
-            // Report completion of this operation
-            let bytesPerSecond = await tracker.calculateSpeed()
-            let totalTransferred = await tracker.totalBytesTransferred
-
-            progress?(
-                SyncProgress(
-                    currentOperation: nil,
-                    completedOperations: index + 1,
-                    totalOperations: operationsToRun.count,
-                    currentFileBytes: 0,
-                    currentFileTotalBytes: 0,
-                    totalBytesTransferred: totalTransferred,
-                    totalBytes: totalBytes,
-                    bytesPerSecond: bytesPerSecond
-                ))
-        } catch {
-            failed += 1
+/// Executes sync operations and returns a stream of operation results
+private func executeSyncOperationsStream(
+    _ operations: [SyncOperation]
+) -> AsyncStream<OperationResult> {
+    return AsyncStream<OperationResult> { continuation in
+        Task {
+            await executeSyncOperations(operations, continuation: continuation)
         }
     }
+}
 
-    return SyncResult(
-        operations: operations,
-        succeeded: succeeded,
-        failed: failed,
-        skipped: skipped
-    )
+/// Executes a list of sync operations and yields results to the stream
+private func executeSyncOperations(
+    _ operations: [SyncOperation],
+    continuation: AsyncStream<OperationResult>.Continuation
+) async {
+    let operationsToRun = operations.filter { $0.type != .info }
+
+    defer {
+        // Always finish the continuation when done
+        continuation.finish()
+    }
+
+    for operation in operationsToRun {
+        do {
+            // Execute the operation without progress callbacks
+            let bytesTransferred = try await executeSyncOperation(operation, progressCallback: nil)
+
+            // Yield success result to stream
+            continuation.yield(
+                .success(
+                    OperationSuccess(
+                        operation: operation,
+                        bytesTransferred: bytesTransferred
+                    )))
+        } catch {
+            // Yield failure result to stream
+            continuation.yield(
+                .failure(
+                    OperationError(
+                        operation: operation,
+                        error: error
+                    )))
+        }
+    }
 }
 
 /// Gets the size of a single operation
@@ -522,8 +629,9 @@ private func executeSyncOperation(
                 }
                 return 0
 
-            case .info:
-                throw DirectorySyncError.operationFailed("Unsupported operation")
+            case .info, .initialization:
+                // These operation types should not be executed
+                throw DirectorySyncError.operationFailed("Unsupported operation type")
         }
     }.value
 }

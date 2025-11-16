@@ -34,27 +34,28 @@ enum OutputFormatter {
     // MARK: - Sync Results Printing
 
     static func printSyncResults(
-        result: SyncResult, format: OutputFormat, verbose: Bool, dryRun: Bool
+        results: [OperationResult], format: OutputFormat, verbose: Bool, dryRun: Bool
     ) {
         switch format {
             case .text:
-                printSyncTextFormat(result: result, verbose: verbose, dryRun: dryRun)
+                printSyncTextFormat(results: results, verbose: verbose, dryRun: dryRun)
             case .json:
-                printSyncJSONFormat(result: result)
+                printSyncJSONFormat(results: results)
             case .summary:
-                printSyncSummaryFormat(result: result, dryRun: dryRun)
+                printSyncSummaryFormat(results: results, dryRun: dryRun)
         }
     }
 
-    private static func printSyncTextFormat(result: SyncResult, verbose: Bool, dryRun: Bool) {
-        if result.operations.isEmpty {
+    private static func printSyncTextFormat(results: [OperationResult], verbose: Bool, dryRun: Bool)
+    {
+        if results.operations.isEmpty {
             print("✓ No operations needed")
             return
         }
-        let (copies, updates, deletes, infos) = groupOperations(result.operations)
+        let (copies, updates, deletes, infos) = groupOperations(results.operations)
 
         let verb = dryRun ? "Would perform" : "Performed"
-        print("\(verb) \(result.totalOperations) operation(s)")
+        print("\(verb) \(results.operations.count) operation(s)")
         print()
 
         if !copies.isEmpty {
@@ -79,8 +80,18 @@ enum OutputFormatter {
 
         if !dryRun {
             print(
-                "Summary: \(result.succeeded) succeeded, \(result.failed) failed, \(result.skipped) skipped"
+                "Summary: \(results.succeeded) succeeded, \(results.failed) failed"
             )
+
+            // Print failed operations if any
+            if !results.failedOperations.isEmpty {
+                print()
+                print("❌ Failed Operations (\(results.failedOperations.count)):")
+                for (operation, error) in results.failedOperations {
+                    print("  ✗ \(operation.relativePath)")
+                    print("    Error: \(error)")
+                }
+            }
         }
     }
 
@@ -106,13 +117,15 @@ enum OutputFormatter {
                     " ^"
                 case .info:
                     " i"
+                case .initialization:
+                    " ❌"
             }
 
         print("\(prefix) \(operation.relativePath)")
     }
 
-    private static func printSyncJSONFormat(result: SyncResult) {
-        let operations = result.operations.map { op in
+    private static func printSyncJSONFormat(results: [OperationResult]) {
+        let operations = results.operations.map { op in
             [
                 "type": String(describing: op.type),
                 "path": op.relativePath,
@@ -121,32 +134,41 @@ enum OutputFormatter {
             ]
         }
 
+        let failedOps = results.failedOperations.map { (operation, error) in
+            [
+                "type": String(describing: operation.type),
+                "path": operation.relativePath,
+                "left": operation.left ?? "",
+                "right": operation.right,
+                "error": String(describing: error),
+            ]
+        }
+
         let resultDict: [String: Any] = [
             "operations": operations,
+            "failedOperations": failedOps,
             "summary": [
-                "total": result.totalOperations,
-                "succeeded": result.succeeded,
-                "failed": result.failed,
-                "skipped": result.skipped,
+                "total": results.operations.count,
+                "succeeded": results.succeeded,
+                "failed": results.failed,
             ],
         ]
 
         printJSON(resultDict)
     }
 
-    private static func printSyncSummaryFormat(result: SyncResult, dryRun: Bool) {
-        let (copies, updates, deletes, infos) = groupOperations(result.operations)
+    private static func printSyncSummaryFormat(results: [OperationResult], dryRun: Bool) {
+        let (copies, updates, deletes, infos) = groupOperations(results.operations)
 
-        print("Total operations: \(result.operations.count)")
+        print("Total operations: \(results.operations.count)")
         print("Copy: \(copies.count)")
         print("Update: \(updates.count)")
         print("Delete: \(deletes.count)")
         print("Info: \(infos.count)")
 
         if !dryRun {
-            print("Succeeded: \(result.succeeded)")
-            print("Failed: \(result.failed)")
-            print("Skipped: \(result.skipped)")
+            print("Succeeded: \(results.succeeded)")
+            print("Failed: \(results.failed)")
         }
     }
 

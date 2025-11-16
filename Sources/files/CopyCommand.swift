@@ -50,18 +50,7 @@ extension Files {
                 let progressDisplay: ProgressFormatter? =
                     (format == .text && !dryRun) ? ProgressFormatter() : nil
 
-                let progressHandler: ProgressHandler? =
-                    if let display = progressDisplay {
-                        { progress in
-                            Task {
-                                await display.display(progress)
-                            }
-                        }
-                    } else {
-                        nil
-                    }
-
-                let result = try await directorySync(
+                let syncResult = await directorySync(
                     left: sourcePath,
                     right: destinationPath,
                     mode: .oneWay,
@@ -69,23 +58,38 @@ extension Files {
                     deletions: false,
                     showMoreRight: showMoreRight,
                     dryRun: dryRun,
-                    ignore: noIgnore ? Ignore() : nil,
-                    progress: progressHandler
+                    ignore: noIgnore ? Ignore() : nil
                 )
 
-                // Complete progress display
+                // Consume the stream and collect results
+                var results: [OperationResult] = []
+
+                for await operationResult in syncResult {
+                    results.append(operationResult)
+
+                    // Display completed operation if enabled
+                    if let display = progressDisplay {
+                        switch operationResult {
+                            case .success(let success):
+                                OutputFormatter.printOperation(success.operation)
+                            case .failure(let failure):
+                                OutputFormatter.printOperation(failure.operation)
+                        }
+                    }
+                }
+
                 if let display = progressDisplay {
                     await display.complete()
                 }
 
                 OutputFormatter.printSyncResults(
-                    result: result,
+                    results: results,
                     format: format,
                     verbose: verbose,
                     dryRun: dryRun
                 )
 
-                if !dryRun && result.failed > 0 {
+                if !dryRun && results.failed > 0 {
                     throw ExitCode(1)
                 }
             } catch let error as DirectorySyncError {
