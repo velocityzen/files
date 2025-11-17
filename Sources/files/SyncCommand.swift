@@ -69,13 +69,11 @@ extension Files {
                     : .oneWay
 
                 if dryRun {
-                    print("🔍 DRY RUN - No changes will be made")
-                    print()
+                    print("🔍 DRY RUN - No changes will be made\n")
                 }
 
                 // Setup progress display for text format
-                let progressDisplay: ProgressFormatter? =
-                    (format == .text && !dryRun) ? ProgressFormatter() : nil
+                let progress = getPrintProgress(format == .text && !dryRun)
 
                 let syncResult = await directorySync(
                     left: sourcePath,
@@ -88,25 +86,10 @@ extension Files {
                     ignore: noIgnore ? Ignore() : nil
                 )
 
-                // Consume the stream and collect results
                 var results: [OperationResult] = []
-
-                for await operationResult in syncResult {
-                    results.append(operationResult)
-
-                    // Display completed operation if enabled
-                    if let display = progressDisplay {
-                        switch operationResult {
-                            case .success(let success):
-                                OutputFormatter.printOperation(success.operation)
-                            case .failure(let failure):
-                                OutputFormatter.printOperation(failure.operation)
-                        }
-                    }
-                }
-
-                if let display = progressDisplay {
-                    await display.complete()
+                for await result in syncResult {
+                    results.append(result)
+                    progress(result)
                 }
 
                 OutputFormatter.printSyncResults(

@@ -3,7 +3,7 @@ import Foundation
 let COPY_CHUNK_SIZE = 1024 * 1024
 let MIN_SIZE_TO_CHUNK = COPY_CHUNK_SIZE * 10
 
-public struct FileOperation: Sendable {
+public struct FileOperation: Sendable, Equatable {
     public enum OperationType: Sendable {
         case copy
         case delete

@@ -109,19 +109,14 @@ enum OutputFormatter {
     static func printOperation(_ operation: FileOperation) {
         let prefix =
             switch operation.type {
-                case .copy:
-                    " +"
-                case .delete:
-                    " -"
-                case .update:
-                    " ^"
-                case .info:
-                    " i"
-                case .compare:
-                    " ❌"
+                case .copy: "+"
+                case .delete: "-"
+                case .update: "^"
+                case .info: "i"
+                case .compare: "❌"
             }
 
-        print("\(prefix) \(operation.relativePath)")
+        print(" \(prefix) \(operation.relativePath)")
     }
 
     private static func printSyncJSONFormat(results: [OperationResult]) {

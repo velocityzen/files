@@ -38,13 +38,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 2)
         #expect(results.failed == 0)
@@ -85,13 +78,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         // Should have no operations since deletions are disabled by default
         #expect(results.succeeded == 0)
@@ -131,13 +117,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 2)
         #expect(results.failed == 0)
@@ -177,13 +156,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 1)
         #expect(results.failed == 0)
@@ -227,13 +199,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 4)  // 2 copies + 1 update + 1 delete
         #expect(results.failed == 0)
@@ -284,13 +249,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 2)
         #expect(results.failed == 0)
@@ -334,13 +292,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         // Should have no delete operations in two-way sync
         let deleteOps = results.operations.filter { $0.type == .delete }
@@ -392,13 +343,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 1)
 
@@ -437,13 +381,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 1)
 
@@ -482,13 +419,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 1)
 
@@ -527,13 +457,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         // Should have no operations for the conflicting file
         #expect(results.operations.isEmpty)
@@ -576,13 +499,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         // Should only copy the unique file
         #expect(results.operations.count == 1)
@@ -618,13 +534,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         // Operations should be planned and marked as succeeded (but with 0 bytes)
         #expect(results.operations.count == 2)
@@ -666,13 +575,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.operations.count == 3)
 
@@ -714,13 +616,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 3)
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("root.txt")))
@@ -754,13 +649,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 1)
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("root.txt")))
@@ -855,13 +743,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.operations.isEmpty)
         #expect(results.succeeded == 0)
@@ -886,13 +767,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.operations.isEmpty)
         #expect(results.succeeded == 0)
@@ -922,13 +796,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 1)
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("a/b/c/deep.txt")))
@@ -961,13 +828,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         #expect(results.succeeded == 1)
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("empty.txt")))
@@ -1004,13 +864,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         // Should copy 2 files (data.txt and config.json), but NOT .filesignore
         #expect(results.succeeded == 2)
@@ -1050,13 +903,6 @@ struct DirectorySyncTests {
         for await opResult in stream {
             results.append(opResult)
         }
-        let allOperations = results.map { result in
-            switch result {
-                case .success(let success): return success.operation
-                case .failure(let failure): return failure.operation
-            }
-        }
-        // Using results array directly
 
         // With !.filesignore in the patterns, it should be included
         // Should copy both files
