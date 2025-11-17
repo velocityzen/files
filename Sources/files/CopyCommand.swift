@@ -45,9 +45,9 @@ extension Files {
             }
 
             // Setup progress display for text format
-            let progress = getPrintProgress(format == .text && !dryRun)
+            let progress = getPrintProgress(format != .text || dryRun)
 
-            let syncResult = await directorySync(
+            let progressStream = await directorySync(
                 left: sourcePath,
                 right: destinationPath,
                 mode: .oneWay,
@@ -58,18 +58,22 @@ extension Files {
                 ignore: noIgnore ? Ignore() : nil
             )
 
-            // Consume the stream and collect results
-            var results: [OperationResult] = []
-
-            for await result in syncResult {
-                results.append(result)
+            var latestResults: [FileOperation: OperationResult] = [:]
+            for await result in progressStream {
+                let operation =
+                    switch result {
+                        case .success(let success): success.operation
+                        case .failure(let failure): failure.operation
+                    }
+                latestResults[operation] = result
                 progress(result)
             }
 
-            print()
-            OutputFormatter.printSyncResults(
-                results: results,
+            let results = Array(latestResults.values)
+
+            OutputFormatter.printResults(
                 format: format,
+                results: results,
                 verbose: verbose,
                 dryRun: dryRun
             )
@@ -78,6 +82,5 @@ extension Files {
                 throw ExitCode(1)
             }
         }
-
     }
 }

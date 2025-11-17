@@ -3,13 +3,23 @@ import Foundation
 let COPY_CHUNK_SIZE = 1024 * 1024
 let MIN_SIZE_TO_CHUNK = COPY_CHUNK_SIZE * 10
 
-public struct FileOperation: Sendable, Equatable {
-    public enum OperationType: Sendable {
+public struct FileOperation: Sendable, Equatable, Hashable {
+    public enum OperationType: Sendable, CustomStringConvertible {
         case copy
         case delete
         case update
         case info
         case compare  // Special type for comparison/validation errors
+
+        public var description: String {
+            switch self {
+                case .copy: "+"
+                case .delete: "-"
+                case .update: "^"
+                case .info: "i"
+                case .compare: "❌"
+            }
+        }
     }
 
     public let type: OperationType
@@ -596,6 +606,7 @@ internal func copyFileWithProgress(
 
     var buffer = [UInt8](repeating: 0, count: bufferSize)
     var totalBytesRead: Int64 = 0
+    var lastReportedBytes: Int64 = 0
 
     while inputStream.hasBytesAvailable {
         let bytesRead = inputStream.read(&buffer, maxLength: bufferSize)
@@ -621,7 +632,15 @@ internal func copyFileWithProgress(
 
         totalBytesRead += Int64(bytesRead)
 
-        // Yield progress update to the stream
+        // Yield progress update only at intervals
+        if totalBytesRead - lastReportedBytes >= MIN_SIZE_TO_CHUNK {
+            continuation.success(operation: operation, bytesTransferred: totalBytesRead)
+            lastReportedBytes = totalBytesRead
+        }
+    }
+
+    // Final progress update with exact total
+    if totalBytesRead != lastReportedBytes {
         continuation.success(operation: operation, bytesTransferred: totalBytesRead)
     }
 

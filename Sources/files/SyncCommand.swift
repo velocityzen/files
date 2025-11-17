@@ -62,49 +62,51 @@ extension Files {
         var noIgnore: Bool = false
 
         mutating func run() async throws {
-            do {
-                let syncMode: SyncMode =
-                    twoWay
-                    ? .twoWay(conflictResolution: conflictResolution.toConflictResolution())
-                    : .oneWay
+            if dryRun {
+                print("🔍 DRY RUN - No changes will be made\n")
+            }
 
-                if dryRun {
-                    print("🔍 DRY RUN - No changes will be made\n")
-                }
+            let syncMode: SyncMode =
+                twoWay
+                ? .twoWay(conflictResolution: conflictResolution.toConflictResolution())
+                : .oneWay
 
-                // Setup progress display for text format
-                let progress = getPrintProgress(format == .text && !dryRun)
+            // Setup progress display for text format
+            let progress = getPrintProgress(format == .text && !dryRun)
 
-                let syncResult = await directorySync(
-                    left: sourcePath,
-                    right: destinationPath,
-                    mode: syncMode,
-                    recursive: recursive,
-                    deletions: deletions,
-                    showMoreRight: showMoreRight,
-                    dryRun: dryRun,
-                    ignore: noIgnore ? Ignore() : nil
-                )
+            let progressStream = await directorySync(
+                left: sourcePath,
+                right: destinationPath,
+                mode: syncMode,
+                recursive: recursive,
+                deletions: deletions,
+                showMoreRight: showMoreRight,
+                dryRun: dryRun,
+                ignore: noIgnore ? Ignore() : nil
+            )
 
-                var results: [OperationResult] = []
-                for await result in syncResult {
-                    results.append(result)
-                    progress(result)
-                }
+            var latestResults: [FileOperation: OperationResult] = [:]
+            for await result in progressStream {
+                let operation =
+                    switch result {
+                        case .success(let success): success.operation
+                        case .failure(let failure): failure.operation
+                    }
+                latestResults[operation] = result
+                progress(result)
+            }
 
-                OutputFormatter.printSyncResults(
-                    results: results,
-                    format: format,
-                    verbose: verbose,
-                    dryRun: dryRun
-                )
+            let results = Array(latestResults.values)
 
-                if !dryRun && results.failed > 0 {
-                    throw ExitCode(1)
-                }
-            } catch let error as DirectorySyncError {
-                OutputFormatter.printError(error)
-                throw ExitCode(2)
+            OutputFormatter.printResults(
+                format: format,
+                results: results,
+                verbose: verbose,
+                dryRun: dryRun
+            )
+
+            if !dryRun && results.failed > 0 {
+                throw ExitCode(1)
             }
         }
     }

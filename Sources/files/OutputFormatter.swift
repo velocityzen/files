@@ -33,27 +33,27 @@ enum OutputFormatter {
 
     // MARK: - Sync Results Printing
 
-    static func printSyncResults(
-        results: [OperationResult], format: OutputFormat, verbose: Bool, dryRun: Bool
+    static func printResults(
+        format: OutputFormat, results: [OperationResult], verbose: Bool, dryRun: Bool
     ) {
         switch format {
             case .text:
-                printSyncTextFormat(results: results, verbose: verbose, dryRun: dryRun)
+                printTextFormat(results: results, verbose: verbose, dryRun: dryRun)
             case .json:
-                printSyncJSONFormat(results: results)
+                printJSONFormat(results: results)
             case .summary:
-                printSyncSummaryFormat(results: results, dryRun: dryRun)
+                printSummaryFormat(results: results, dryRun: dryRun)
         }
     }
 
-    private static func printSyncTextFormat(results: [OperationResult], verbose: Bool, dryRun: Bool)
-    {
+    private static func printTextFormat(results: [OperationResult], verbose: Bool, dryRun: Bool) {
         if results.operations.isEmpty {
             print("✓ No operations needed")
             return
         }
         let (copies, updates, deletes, infos) = groupOperations(results.operations)
 
+        print()
         let verb = dryRun ? "Would perform" : "Performed"
         print("\(verb) \(results.operations.count) operation(s)")
         print()
@@ -107,19 +107,10 @@ enum OutputFormatter {
     }
 
     static func printOperation(_ operation: FileOperation) {
-        let prefix =
-            switch operation.type {
-                case .copy: "+"
-                case .delete: "-"
-                case .update: "^"
-                case .info: "i"
-                case .compare: "❌"
-            }
-
-        print(" \(prefix) \(operation.relativePath)")
+        print(" \(operation.type) \(operation.relativePath)")
     }
 
-    private static func printSyncJSONFormat(results: [OperationResult]) {
+    private static func printJSONFormat(results: [OperationResult]) {
         let operations = results.operations.map { op in
             [
                 "type": String(describing: op.type),
@@ -152,7 +143,7 @@ enum OutputFormatter {
         printJSON(resultDict)
     }
 
-    private static func printSyncSummaryFormat(results: [OperationResult], dryRun: Bool) {
+    private static func printSummaryFormat(results: [OperationResult], dryRun: Bool) {
         let (copies, updates, deletes, infos) = groupOperations(results.operations)
 
         print("Total operations: \(results.operations.count)")
