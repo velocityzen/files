@@ -1,6 +1,9 @@
 import FilesKit
 import Foundation
 
+// Capture stdout at module initialization to avoid concurrency warnings
+nonisolated(unsafe) let stdoutPtr = stdout
+
 /// Creates a progress printer that replaces the line if it's for the same file
 func getPrintProgress(_ isMute: Bool = false) -> (OperationResult) -> Void {
     if isMute {
@@ -44,8 +47,6 @@ func getPrintProgress(_ isMute: Bool = false) -> (OperationResult) -> Void {
                 previousOperation = failure.operation
         }
 
-        //  `fflush` call is thread-safe in practice
-        nonisolated(unsafe) let stdoutPtr = stdout
         fflush(stdoutPtr)
     }
 }
