@@ -1,13 +1,10 @@
-/// Extension to simplify error handling in AsyncStream
 extension AsyncStream where Element == OperationResult {
     /// Creates a stream that yields a single failure result and finishes
-    static func fastFail(leftPath: String, rightPath: String, error: Error, message: String)
+    static func fastFail(on operation: FileOperation, with error: Error)
         -> AsyncStream<OperationResult>
     {
         return AsyncStream<OperationResult> { continuation in
-            let compareOp = FileOperation.compareOperation(
-                leftPath: leftPath, rightPath: rightPath, error: message)
-            continuation.failure(operation: compareOp, error: error)
+            continuation.failure(operation: operation, error: error)
             continuation.finish()
         }
     }

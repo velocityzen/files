@@ -115,12 +115,16 @@ public func directorySync(
     )
 
     if case .failure(let error) = diffResult {
-        let syncError = DirectorySyncError.from(error: error)
-        return .fastFail(
+        let error = DirectorySyncError.from(error: error)
+        let operation = FileOperation.compareOperation(
             leftPath: leftPath,
             rightPath: rightPath,
-            error: syncError,
-            message: "\(syncError)"
+            error: "\(error)"
+        )
+
+        return .fastFail(
+            on: operation,
+            with: error,
         )
     }
 
@@ -136,9 +140,16 @@ public func directorySync(
     )
 
     if case .failure(let error) = planResult {
+        let operation = FileOperation.compareOperation(
+            leftPath: leftPath,
+            rightPath: rightPath,
+            error: "Planning failed: \(error)"
+        )
+
         return .fastFail(
-            leftPath: leftPath, rightPath: rightPath, error: error,
-            message: "Planning failed: \(error)")
+            on: operation,
+            with: error,
+        )
     }
 
     var operations = try! planResult.get()
