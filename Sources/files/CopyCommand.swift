@@ -40,59 +40,47 @@ extension Files {
         var noIgnore: Bool = false
 
         mutating func run() async throws {
-            do {
-                if dryRun {
-                    print("🔍 DRY RUN - No changes will be made")
-                    print()
-                }
+            if dryRun {
+                print("🔍 DRY RUN - No changes will be made\n")
+            }
 
-                // Setup progress display for text format
-                let progressDisplay: ProgressFormatter? =
-                    (format == .text && !dryRun) ? ProgressFormatter() : nil
+            // Setup progress display for text format
+            let progress = getPrintProgress(format != .text || dryRun)
 
-                let progressHandler: ProgressHandler? =
-                    if let display = progressDisplay {
-                        { progress in
-                            Task {
-                                await display.display(progress)
-                            }
-                        }
-                    } else {
-                        nil
+            let progressStream = await directorySync(
+                left: sourcePath,
+                right: destinationPath,
+                mode: .oneWay,
+                recursive: true,
+                deletions: false,
+                showMoreRight: showMoreRight,
+                dryRun: dryRun,
+                ignore: noIgnore ? Ignore() : nil
+            )
+
+            var latestResults: [FileOperation: OperationResult] = [:]
+            for await result in progressStream {
+                let operation =
+                    switch result {
+                        case .success(let success): success.operation
+                        case .failure(let failure): failure.operation
                     }
+                latestResults[operation] = result
+                progress(result)
+            }
 
-                let result = try await directorySync(
-                    left: sourcePath,
-                    right: destinationPath,
-                    mode: .oneWay,
-                    recursive: true,
-                    deletions: false,
-                    showMoreRight: showMoreRight,
-                    dryRun: dryRun,
-                    ignore: noIgnore ? Ignore() : nil,
-                    progress: progressHandler
-                )
+            let results = Array(latestResults.values)
 
-                // Complete progress display
-                if let display = progressDisplay {
-                    await display.complete()
-                }
+            OutputFormatter.printResults(
+                format: format,
+                results: results,
+                verbose: verbose,
+                dryRun: dryRun
+            )
 
-                OutputFormatter.printSyncResults(
-                    result: result,
-                    format: format,
-                    verbose: verbose,
-                    dryRun: dryRun
-                )
-
-                if !dryRun && result.failed > 0 {
-                    throw ExitCode(1)
-                }
-            } catch let error as DirectorySyncError {
-                OutputFormatter.printError(error)
-                throw ExitCode(2)
+            if !dryRun && results.failed > 0 {
+                throw ExitCode(1)
             }
         }
-
     }
 }

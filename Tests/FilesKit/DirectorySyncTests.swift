@@ -28,17 +28,21 @@ struct DirectorySyncTests {
         // Create isolated ignore patterns (don't load from home directory)
         let ignore = Ignore(patterns: ["*.log", "*.tmp"])
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
             ignore: ignore
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 2)
-        #expect(result.failed == 0)
-        #expect(result.operations.count == 2)
-        #expect(result.operations.allSatisfy { $0.type == .copy })
+        #expect(results.succeeded == 2)
+        #expect(results.failed == 0)
+        #expect(results.operations.count == 2)
+        #expect(results.operations.allSatisfy { $0.type == .copy })
 
         // Verify files were copied
         let file1 = rightDir.appendingPathComponent("file1.txt")
@@ -65,16 +69,20 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
         // Should have no operations since deletions are disabled by default
-        #expect(result.succeeded == 0)
-        #expect(result.failed == 0)
-        #expect(result.operations.count == 0)
+        #expect(results.succeeded == 0)
+        #expect(results.failed == 0)
+        #expect(results.operations.count == 0)
 
         // Verify files were NOT deleted
         let file1 = rightDir.appendingPathComponent("old1.txt")
@@ -99,17 +107,21 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
             deletions: true
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 2)
-        #expect(result.failed == 0)
-        #expect(result.operations.count == 2)
-        #expect(result.operations.allSatisfy { $0.type == .delete })
+        #expect(results.succeeded == 2)
+        #expect(results.failed == 0)
+        #expect(results.operations.count == 2)
+        #expect(results.operations.allSatisfy { $0.type == .delete })
 
         // Verify files were deleted
         let file1 = rightDir.appendingPathComponent("old1.txt")
@@ -135,16 +147,20 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 1)
-        #expect(result.failed == 0)
-        #expect(result.operations.count == 1)
-        #expect(result.operations.first?.type == .update)
+        #expect(results.succeeded == 1)
+        #expect(results.failed == 0)
+        #expect(results.operations.count == 1)
+        #expect(results.operations.first?.type == .update)
 
         // Verify file was updated
         let file = rightDir.appendingPathComponent("file.txt")
@@ -173,19 +189,23 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
             deletions: true
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 4)  // 2 copies + 1 update + 1 delete
-        #expect(result.failed == 0)
+        #expect(results.succeeded == 4)  // 2 copies + 1 update + 1 delete
+        #expect(results.failed == 0)
 
-        let copyOps = result.operations.filter { $0.type == .copy }
-        let updateOps = result.operations.filter { $0.type == .update }
-        let deleteOps = result.operations.filter { $0.type == .delete }
+        let copyOps = results.operations.filter { $0.type == .copy }
+        let updateOps = results.operations.filter { $0.type == .update }
+        let deleteOps = results.operations.filter { $0.type == .delete }
 
         #expect(copyOps.count == 2)
         #expect(updateOps.count == 1)
@@ -220,16 +240,20 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .twoWay(conflictResolution: .keepNewest)
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 2)
-        #expect(result.failed == 0)
-        #expect(result.operations.count == 2)
-        #expect(result.operations.allSatisfy { $0.type == .copy })
+        #expect(results.succeeded == 2)
+        #expect(results.failed == 0)
+        #expect(results.operations.count == 2)
+        #expect(results.operations.allSatisfy { $0.type == .copy })
 
         // Verify files were copied in both directions
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("left_only.txt")))
@@ -259,14 +283,18 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .twoWay(conflictResolution: .keepNewest)
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
         // Should have no delete operations in two-way sync
-        let deleteOps = result.operations.filter { $0.type == .delete }
+        let deleteOps = results.operations.filter { $0.type == .delete }
         #expect(deleteOps.isEmpty)
 
         // Both files should exist in both directories
@@ -306,13 +334,17 @@ struct DirectorySyncTests {
             modificationDate: newer
         )
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .twoWay(conflictResolution: .keepNewest)
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 1)
+        #expect(results.succeeded == 1)
 
         // Both should have the newer content (from right)
         #expect(
@@ -340,13 +372,17 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .twoWay(conflictResolution: .keepLeft)
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 1)
+        #expect(results.succeeded == 1)
 
         // Both should have left content
         #expect(
@@ -374,13 +410,17 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .twoWay(conflictResolution: .keepRight)
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 1)
+        #expect(results.succeeded == 1)
 
         // Both should have right content
         #expect(
@@ -408,14 +448,18 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .twoWay(conflictResolution: .skip)
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
         // Should have no operations for the conflicting file
-        #expect(result.operations.isEmpty)
+        #expect(results.operations.isEmpty)
 
         // Both should keep their original content
         #expect(
@@ -446,16 +490,20 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .twoWay(conflictResolution: .skip)
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
         // Should only copy the unique file
-        #expect(result.operations.count == 1)
-        #expect(result.operations.first?.relativePath == "unique.txt")
-        #expect(result.operations.first?.type == .copy)
+        #expect(results.operations.count == 1)
+        #expect(results.operations.first?.relativePath == "unique.txt")
+        #expect(results.operations.first?.type == .copy)
     }
 
     // MARK: - Dry-Run Tests
@@ -476,18 +524,21 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
             dryRun: true
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        // Operations should be planned
-        #expect(result.operations.count == 2)
-        #expect(result.skipped == 2)
-        #expect(result.succeeded == 0)
-        #expect(result.failed == 0)
+        // Operations should be planned and marked as succeeded (but with 0 bytes)
+        #expect(results.operations.count == 2)
+        #expect(results.succeeded == 2)
+        #expect(results.failed == 0)
 
         // But no actual changes made
         #expect(!TestHelpers.fileExists(at: rightDir.appendingPathComponent("file1.txt")))
@@ -513,19 +564,23 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
             deletions: true,
             dryRun: true
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.operations.count == 3)
+        #expect(results.operations.count == 3)
 
-        let copyOps = result.operations.filter { $0.type == .copy }
-        let updateOps = result.operations.filter { $0.type == .update }
-        let deleteOps = result.operations.filter { $0.type == .delete }
+        let copyOps = results.operations.filter { $0.type == .copy }
+        let updateOps = results.operations.filter { $0.type == .update }
+        let deleteOps = results.operations.filter { $0.type == .delete }
 
         #expect(copyOps.count == 1)
         #expect(updateOps.count == 1)
@@ -551,14 +606,18 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
             recursive: true
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 3)
+        #expect(results.succeeded == 3)
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("root.txt")))
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("sub1/file1.txt")))
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("sub1/sub2/deep.txt")))
@@ -580,21 +639,25 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
             recursive: false
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 1)
+        #expect(results.succeeded == 1)
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("root.txt")))
         #expect(!TestHelpers.fileExists(at: rightDir.appendingPathComponent("subdir/nested.txt")))
     }
 
     // MARK: - Error Handling Tests
 
-    @Test("Invalid left directory throws error")
+    @Test("Invalid left directory returns error")
     func invalidSourceDirectory() async throws {
         let rightDir = try TestHelpers.createTestDirectory(files: [:])
 
@@ -602,16 +665,29 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        await #expect(throws: DirectorySyncError.self) {
-            _ = try await directorySync(
-                left: "/nonexistent/left/12345",
-                right: rightDir.path(percentEncoded: false),
-                mode: .oneWay
-            )
+        let stream = await directorySync(
+            left: "/nonexistent/left/12345",
+            right: rightDir.path(percentEncoded: false),
+            mode: .oneWay
+        )
+
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
+
+        // Should have exactly one result
+        #expect(results.count == 1)
+
+        // Should be a failure with initialization operation
+        if case .failure(let opError) = results.first {
+            #expect(opError.operation.type == .compare)
+        } else {
+            Issue.record("Expected initialization error")
         }
     }
 
-    @Test("Invalid right directory throws error")
+    @Test("Invalid right directory returns error")
     func invalidDestinationDirectory() async throws {
         let leftDir = try TestHelpers.createTestDirectory(files: [:])
 
@@ -619,12 +695,25 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(leftDir)
         }
 
-        await #expect(throws: DirectorySyncError.self) {
-            _ = try await directorySync(
-                left: leftDir.path(percentEncoded: false),
-                right: "/nonexistent/right/12345",
-                mode: .oneWay
-            )
+        let stream = await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: "/nonexistent/right/12345",
+            mode: .oneWay
+        )
+
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
+
+        // Should have exactly one result
+        #expect(results.count == 1)
+
+        // Should be a failure with initialization operation
+        if case .failure(let opError) = results.first {
+            #expect(opError.operation.type == .compare)
+        } else {
+            Issue.record("Expected initialization error")
         }
     }
 
@@ -645,14 +734,18 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.operations.isEmpty)
-        #expect(result.succeeded == 0)
+        #expect(results.operations.isEmpty)
+        #expect(results.succeeded == 0)
     }
 
     @Test("Sync empty directories")
@@ -665,14 +758,18 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.operations.isEmpty)
-        #expect(result.succeeded == 0)
+        #expect(results.operations.isEmpty)
+        #expect(results.succeeded == 0)
     }
 
     @Test("Sync creates intermediate directories")
@@ -690,13 +787,17 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 1)
+        #expect(results.succeeded == 1)
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("a/b/c/deep.txt")))
         #expect(
             try TestHelpers.readFile(at: rightDir.appendingPathComponent("a/b/c/deep.txt"))
@@ -718,13 +819,17 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
-        #expect(result.succeeded == 1)
+        #expect(results.succeeded == 1)
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("empty.txt")))
         #expect(try TestHelpers.readFile(at: rightDir.appendingPathComponent("empty.txt")) == "")
     }
@@ -749,16 +854,20 @@ struct DirectorySyncTests {
         // Create isolated ignore patterns (don't load from home directory)
         let ignore = Ignore(patterns: ["*.log", "*.tmp"])
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay,
             ignore: ignore
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
         // Should copy 2 files (data.txt and config.json), but NOT .filesignore
-        #expect(result.succeeded == 2)
-        #expect(result.operations.count == 2)
+        #expect(results.succeeded == 2)
+        #expect(results.operations.count == 2)
 
         // Verify .filesignore was NOT copied
         let filesignorePath = rightDir.appendingPathComponent(".filesignore")
@@ -785,16 +894,20 @@ struct DirectorySyncTests {
             try? TestHelpers.cleanupTestDirectory(rightDir)
         }
 
-        let result = try await directorySync(
+        let stream = await directorySync(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             mode: .oneWay
         )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
 
         // With !.filesignore in the patterns, it should be included
         // Should copy both files
-        #expect(result.succeeded == 2)
-        #expect(result.operations.count == 2)
+        #expect(results.succeeded == 2)
+        #expect(results.operations.count == 2)
 
         // Verify .filesignore WAS copied this time
         let filesignorePath = rightDir.appendingPathComponent(".filesignore")

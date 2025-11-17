@@ -33,28 +33,29 @@ enum OutputFormatter {
 
     // MARK: - Sync Results Printing
 
-    static func printSyncResults(
-        result: SyncResult, format: OutputFormat, verbose: Bool, dryRun: Bool
+    static func printResults(
+        format: OutputFormat, results: [OperationResult], verbose: Bool, dryRun: Bool
     ) {
         switch format {
             case .text:
-                printSyncTextFormat(result: result, verbose: verbose, dryRun: dryRun)
+                printTextFormat(results: results, verbose: verbose, dryRun: dryRun)
             case .json:
-                printSyncJSONFormat(result: result)
+                printJSONFormat(results: results)
             case .summary:
-                printSyncSummaryFormat(result: result, dryRun: dryRun)
+                printSummaryFormat(results: results, dryRun: dryRun)
         }
     }
 
-    private static func printSyncTextFormat(result: SyncResult, verbose: Bool, dryRun: Bool) {
-        if result.operations.isEmpty {
+    private static func printTextFormat(results: [OperationResult], verbose: Bool, dryRun: Bool) {
+        if results.operations.isEmpty {
             print("✓ No operations needed")
             return
         }
-        let (copies, updates, deletes, infos) = groupOperations(result.operations)
+        let (copies, updates, deletes, infos) = groupOperations(results.operations)
 
+        print()
         let verb = dryRun ? "Would perform" : "Performed"
-        print("\(verb) \(result.totalOperations) operation(s)")
+        print("\(verb) \(results.operations.count) operation(s)")
         print()
 
         if !copies.isEmpty {
@@ -79,13 +80,23 @@ enum OutputFormatter {
 
         if !dryRun {
             print(
-                "Summary: \(result.succeeded) succeeded, \(result.failed) failed, \(result.skipped) skipped"
+                "Summary: \(results.succeeded) succeeded, \(results.failed) failed"
             )
+
+            // Print failed operations if any
+            if !results.failedOperations.isEmpty {
+                print()
+                print("❌ Failed Operations (\(results.failedOperations.count)):")
+                for (operation, error) in results.failedOperations {
+                    print("  ✗ \(operation.relativePath)")
+                    print("    Error: \(error)")
+                }
+            }
         }
     }
 
     static func printOperationList(
-        _ title: String, operations: [SyncOperation], verbose: Bool
+        _ title: String, operations: [FileOperation], verbose: Bool
     ) {
         print("\(title) (\(operations.count))")
         if verbose {
@@ -95,24 +106,12 @@ enum OutputFormatter {
         }
     }
 
-    static func printOperation(_ operation: SyncOperation) {
-        let prefix =
-            switch operation.type {
-                case .copy:
-                    " +"
-                case .delete:
-                    " -"
-                case .update:
-                    " ^"
-                case .info:
-                    " i"
-            }
-
-        print("\(prefix) \(operation.relativePath)")
+    static func printOperation(_ operation: FileOperation) {
+        print(" \(operation.type) \(operation.relativePath)")
     }
 
-    private static func printSyncJSONFormat(result: SyncResult) {
-        let operations = result.operations.map { op in
+    private static func printJSONFormat(results: [OperationResult]) {
+        let operations = results.operations.map { op in
             [
                 "type": String(describing: op.type),
                 "path": op.relativePath,
@@ -121,32 +120,41 @@ enum OutputFormatter {
             ]
         }
 
+        let failedOps = results.failedOperations.map { (operation, error) in
+            [
+                "type": String(describing: operation.type),
+                "path": operation.relativePath,
+                "left": operation.left ?? "",
+                "right": operation.right,
+                "error": String(describing: error),
+            ]
+        }
+
         let resultDict: [String: Any] = [
             "operations": operations,
+            "failedOperations": failedOps,
             "summary": [
-                "total": result.totalOperations,
-                "succeeded": result.succeeded,
-                "failed": result.failed,
-                "skipped": result.skipped,
+                "total": results.operations.count,
+                "succeeded": results.succeeded,
+                "failed": results.failed,
             ],
         ]
 
         printJSON(resultDict)
     }
 
-    private static func printSyncSummaryFormat(result: SyncResult, dryRun: Bool) {
-        let (copies, updates, deletes, infos) = groupOperations(result.operations)
+    private static func printSummaryFormat(results: [OperationResult], dryRun: Bool) {
+        let (copies, updates, deletes, infos) = groupOperations(results.operations)
 
-        print("Total operations: \(result.operations.count)")
+        print("Total operations: \(results.operations.count)")
         print("Copy: \(copies.count)")
         print("Update: \(updates.count)")
         print("Delete: \(deletes.count)")
         print("Info: \(infos.count)")
 
         if !dryRun {
-            print("Succeeded: \(result.succeeded)")
-            print("Failed: \(result.failed)")
-            print("Skipped: \(result.skipped)")
+            print("Succeeded: \(results.succeeded)")
+            print("Failed: \(results.failed)")
         }
     }
 
@@ -253,14 +261,14 @@ enum OutputFormatter {
         }
     }
 
-    private static func groupOperations(_ operations: [SyncOperation]) -> (
-        copies: [SyncOperation],
-        updates: [SyncOperation],
-        deletes: [SyncOperation],
-        infos: [SyncOperation]
+    private static func groupOperations(_ operations: [FileOperation]) -> (
+        copies: [FileOperation],
+        updates: [FileOperation],
+        deletes: [FileOperation],
+        infos: [FileOperation]
     ) {
         let grouped = operations.reduce(
-            into: [SyncOperation.OperationType: [SyncOperation]]()
+            into: [FileOperation.OperationType: [FileOperation]]()
         ) { dict, operation in
             dict[operation.type, default: []].append(operation)
         }

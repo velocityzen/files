@@ -3,6 +3,18 @@ import Testing
 
 @testable import FilesKit
 
+// Helper extension to convert Result to throwing
+extension Result where Success == DirectoryDifference, Failure == DirectoryDifferenceError {
+    func unwrap() throws -> DirectoryDifference {
+        switch self {
+            case .success(let diff):
+                return diff
+            case .failure(let error):
+                throw error
+        }
+    }
+}
+
 /// Test suite for directory difference functionality
 @Suite("DirectoryDifference")
 struct DirectoryDifferenceTests {
@@ -22,7 +34,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.onlyInLeft.isEmpty)
         #expect(diff.onlyInRight.isEmpty)
@@ -49,7 +61,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.onlyInLeft.isEmpty)
         #expect(diff.onlyInRight.isEmpty)
@@ -81,7 +93,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.onlyInLeft.count == 2)
         #expect(diff.onlyInLeft.contains("left1.txt"))
@@ -110,7 +122,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.onlyInLeft.isEmpty)
         #expect(diff.onlyInRight.count == 2)
@@ -142,7 +154,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.onlyInLeft.count == 1)
         #expect(diff.onlyInLeft.contains("left_only.txt"))
@@ -175,7 +187,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.onlyInLeft.isEmpty)
         #expect(diff.onlyInRight.isEmpty)
@@ -208,7 +220,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.onlyInLeft.isEmpty)
         #expect(diff.onlyInRight.isEmpty)
@@ -239,7 +251,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.modified.count == 1)
         #expect(diff.modified.contains("file.txt"))
@@ -270,7 +282,7 @@ struct DirectoryDifferenceTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             recursive: true
-        )
+        ).unwrap()
 
         #expect(diff.common.count == 2)
         #expect(diff.common.contains("root.txt"))
@@ -300,7 +312,7 @@ struct DirectoryDifferenceTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             recursive: false
-        )
+        ).unwrap()
 
         #expect(diff.common.count == 1)
         #expect(diff.common.contains("root.txt"))
@@ -328,7 +340,7 @@ struct DirectoryDifferenceTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             recursive: true
-        )
+        ).unwrap()
 
         #expect(diff.common.count == 1)
         #expect(diff.common.contains("a/b/c/d/deep.txt"))
@@ -348,7 +360,7 @@ struct DirectoryDifferenceTests {
             _ = try await directoryDifference(
                 left: "/nonexistent/path/12345",
                 right: rightDir.path(percentEncoded: false)
-            )
+            ).unwrap()
         }
     }
 
@@ -364,7 +376,7 @@ struct DirectoryDifferenceTests {
             _ = try await directoryDifference(
                 left: leftDir.path(percentEncoded: false),
                 right: "/nonexistent/path/12345"
-            )
+            ).unwrap()
         }
     }
 
@@ -374,7 +386,7 @@ struct DirectoryDifferenceTests {
             _ = try await directoryDifference(
                 left: "/nonexistent/left/12345",
                 right: "/nonexistent/right/12345"
-            )
+            ).unwrap()
         }
     }
 
@@ -391,7 +403,7 @@ struct DirectoryDifferenceTests {
             _ = try await directoryDifference(
                 left: filePath,
                 right: dir.path(percentEncoded: false)
-            )
+            ).unwrap()
         }
     }
 
@@ -425,7 +437,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.onlyInLeft.count == 2)
         #expect(diff.onlyInLeft.contains("left_only_1.txt"))
@@ -463,7 +475,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.common.count == 1)
         #expect(diff.common.contains("empty.txt"))
@@ -492,7 +504,7 @@ struct DirectoryDifferenceTests {
         let diff = try await directoryDifference(
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false)
-        )
+        ).unwrap()
 
         #expect(diff.common.count == 100)
         #expect(diff.onlyInLeft.isEmpty)
@@ -782,7 +794,7 @@ struct JSONComparisonTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             includeOnlyInRight: .leafFoldersOnly
-        )
+        ).unwrap()
 
         // Should find files only in right leaf directories
         #expect(diff.onlyInRight.contains("folder1/subfolder/leaf/extra.txt"))
@@ -823,7 +835,7 @@ struct JSONComparisonTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             includeOnlyInRight: .leafFoldersOnly
-        )
+        ).unwrap()
 
         // Should detect modified files in leaf directories
         #expect(diff.modified.contains("leaf1/file1.txt"))
@@ -861,7 +873,7 @@ struct JSONComparisonTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             includeOnlyInRight: .leafFoldersOnly
-        )
+        ).unwrap()
 
         // Should include files in left's leaf directories
         #expect(diff.onlyInRight.contains("leafdir/extra.txt"))
@@ -895,7 +907,7 @@ struct JSONComparisonTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             includeOnlyInRight: .leafFoldersOnly
-        )
+        ).unwrap()
 
         // leaf2/file2.txt is only in left, not in common
         #expect(diff.onlyInLeft.contains("leaf2/file2.txt"))
@@ -934,7 +946,7 @@ struct JSONComparisonTests {
             left: leftDir.path(percentEncoded: false),
             right: rightDir.path(percentEncoded: false),
             includeOnlyInRight: .leafFoldersOnly
-        )
+        ).unwrap()
 
         // Should find extra files in left's leaf directories
         #expect(diff.onlyInRight.contains("a/b/c/d/extra1.txt"))

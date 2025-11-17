@@ -35,21 +35,23 @@ extension Files {
         var noIgnore: Bool = false
 
         mutating func run() async throws {
-            do {
-                let diff = try await directoryDifference(
-                    left: leftPath,
-                    right: rightPath,
-                    recursive: recursive,
-                    ignore: noIgnore ? Ignore() : nil
-                )
+            let diffResult = await directoryDifference(
+                left: leftPath,
+                right: rightPath,
+                recursive: recursive,
+                ignore: noIgnore ? Ignore() : nil
+            )
 
-                OutputFormatter.printDifferenceResults(diff: diff, format: format, verbose: verbose)
+            switch diffResult {
+                case .success(let diff):
+                    OutputFormatter.printDifferenceResults(
+                        diff: diff, format: format, verbose: verbose)
+                    // Exit with non-zero if there are differences
+                    throw diff.hasDifferences ? ExitCode(1) : ExitCode.success
 
-                // Exit with non-zero if there are differences
-                throw diff.hasDifferences ? ExitCode(1) : ExitCode.success
-            } catch let error as DirectoryDifferenceError {
-                OutputFormatter.printError(error)
-                throw ExitCode(2)
+                case .failure(let error):
+                    OutputFormatter.printError(error)
+                    throw ExitCode(2)
             }
         }
     }

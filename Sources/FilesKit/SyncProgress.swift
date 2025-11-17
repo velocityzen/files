@@ -2,7 +2,7 @@ import Foundation
 
 /// Represents the current state of a sync operation
 public struct SyncProgress: Sendable {
-    public let currentOperation: SyncOperation?
+    public let currentOperation: FileOperation?
     public let completedOperations: Int
     public let totalOperations: Int
     public let currentFileBytes: Int64
@@ -31,7 +31,7 @@ public struct SyncProgress: Sendable {
     }
 
     public init(
-        currentOperation: SyncOperation? = nil,
+        currentOperation: FileOperation? = nil,
         completedOperations: Int = 0,
         totalOperations: Int = 0,
         currentFileBytes: Int64 = 0,
