@@ -44,7 +44,9 @@ func getPrintProgress(_ isMute: Bool = false) -> (OperationResult) -> Void {
                 previousOperation = failure.operation
         }
 
-        fflush(stdout)
+        //  `fflush` call is thread-safe in practice
+        nonisolated(unsafe) let stdoutPtr = stdout
+        fflush(stdoutPtr)
     }
 }
 
