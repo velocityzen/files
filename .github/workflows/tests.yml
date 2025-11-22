@@ -14,4 +14,4 @@ jobs:
       linux_swift_versions: '["nightly-main", "nightly-6.2"]'
       windows_swift_versions: '["nightly-main", "nightly-6.2"]'
       enable_macos_checks: true
-      macos_exclude_xcode_versions: '[{"xcode_version": "26.0.1"}]'
+      macos_exclude_xcode_versions: '[{"xcode_version": "26.1.0"}]'
