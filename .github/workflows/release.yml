@@ -28,7 +28,8 @@ jobs:
 
       - name: Build Release Binary
         run: |
-          swift build -c release --arch arm64
+          swift build -c release --arch arm64 -Xswiftc -O -Xswiftc -whole-module-optimization  -Xswiftc -cross-module-optimization
+          strip .build/release/files
 
       - name: Prepare Binary
         run: |
