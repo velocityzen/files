@@ -100,7 +100,7 @@ enum OutputFormatter {
     ) {
         print("\(title) (\(operations.count))")
         if verbose {
-            for operation in operations {
+            for operation in operations.sorted(by: { $0.relativePath < $1.relativePath }) {
                 printOperation(operation)
             }
         }
