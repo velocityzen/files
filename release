@@ -1,0 +1,31 @@
+#!/bin/bash
+
+if [ -z "$1" ]; then
+    echo "Usage: ./release <version>"
+    echo "Example: ./release 1.0.0"
+    exit 1
+fi
+
+VERSION=$1
+
+echo "🔄 Updating version to $VERSION..."
+
+# Update version in files.swift
+sed -i '' "s/version: \"[^\"]*\"/version: \"$VERSION\"/" Sources/files/files.swift
+
+# Commit the change
+git add Sources/files/files.swift
+git commit -m "Bump version to $VERSION"
+
+# Create git tag
+git tag "v$VERSION"
+
+echo "📤 Pushing to GitHub..."
+
+# Push commits and tags
+git push && git push --tags
+
+echo ""
+echo "✅ Version $VERSION released!"
+echo "🏷️  Tag: v$VERSION"
+echo "🔗 GitHub: https://github.com/velocityzen/Files/releases/tag/v$VERSION"
