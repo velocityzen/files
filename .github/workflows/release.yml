@@ -33,13 +33,13 @@ jobs:
 
       - name: Prepare Binary
         run: |
-          mkdir -p release
-          cp .build/arm64-apple-macosx/release/files release/files
-          chmod +x release/files
-          cd release
-          tar -czf ../files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz files
+          mkdir -p export
+          cp .build/arm64-apple-macosx/release/files export/files
+          chmod +x export/files
+          cd export
+          tar -czf ../files.tar.gz files
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "./files-macos-arm64-${{ steps.version.outputs.tag }}.tar.gz"
+          files: "./files.tar.gz"
