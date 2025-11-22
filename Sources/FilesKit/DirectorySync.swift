@@ -106,7 +106,8 @@ public func directorySync(
     deletions: Bool = false,
     showMoreRight: Bool = false,
     dryRun: Bool = false,
-    ignore: Ignore? = nil
+    ignore: Ignore? = nil,
+    matchPrecision: Double = 1.0
 ) async -> AsyncStream<OperationResult> {
     let rightMode: IncludeOnlyInRight =
         switch mode {
@@ -121,7 +122,8 @@ public func directorySync(
         right: rightPath,
         recursive: recursive,
         includeOnlyInRight: rightMode,
-        ignore: ignore
+        ignore: ignore,
+        matchPrecision: matchPrecision
     )
 
     if case .failure(let error) = diffResult {

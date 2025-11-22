@@ -58,6 +58,13 @@ extension Files {
         @Option(name: .long, help: "Output format: text (default), json")
         var format: OutputFormat = .text
 
+        @Option(
+            name: .long,
+            help:
+                "Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching)"
+        )
+        var matchPrecision: Double = 1.0
+
         @Flag(name: .long, help: "Disable .filesignore pattern matching")
         var noIgnore: Bool = false
 
@@ -82,7 +89,8 @@ extension Files {
                 deletions: deletions,
                 showMoreRight: showMoreRight,
                 dryRun: dryRun,
-                ignore: noIgnore ? Ignore() : nil
+                ignore: noIgnore ? Ignore() : nil,
+                matchPrecision: matchPrecision
             )
 
             var latestResults: [FileOperation: OperationResult] = [:]

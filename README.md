@@ -9,6 +9,7 @@ A fast and efficient command-line tool for comparing and synchronizing directori
 - **Multiple output formats** - Text, JSON, or summary output
 - **Fast concurrent processing** - Uses Swift's modern concurrency for optimal performance
 - **Smart file comparison** - Quickly identifies identical, modified, and unique files
+- **Fuzzy filename matching** - Match files with similar names using configurable precision threshold
 - **Clear exit codes** - Easy integration with scripts and CI/CD pipelines
 - **Pattern-based file filtering** - Use .filesignore to exclude files from operations
 
@@ -123,6 +124,7 @@ files <left-directory> <right-directory> [options]
 #### Options
 
 - `--recursive` / `--no-recursive` - Scan subdirectories recursively (default: recursive)
+- `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching). Lower values enable matching files with similar names using Levenshtein distance
 - `--verbose`, `-v` - Show detailed output with all file paths
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
 - `--no-ignore` - Disable .filesignore pattern matching
@@ -148,6 +150,7 @@ This is a convenience command equivalent to `files sync --no-deletions` with one
 #### Options
 
 - `--show-more-right` - Scan leaf directories on the right side for additional diff information
+- `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching)
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
@@ -178,6 +181,7 @@ files sync <source-directory> <destination-directory> [options]
 - `--recursive` / `--no-recursive` - Scan subdirectories recursively (default: recursive)
 - `--deletions` - Delete files in destination that don't exist in source (one-way sync only, default: false)
 - `--show-more-right` - Scan leaf directories on the right side for additional diff information (one-way sync without deletions only)
+- `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching). Lower values enable matching files with similar names using Levenshtein distance
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
@@ -202,6 +206,66 @@ files sync <source-directory> <destination-directory> [options]
 - `source` - Always prefer the source file
 - `destination` - Always prefer the destination file
 - `skip` - Skip conflicting files, leave both unchanged
+
+## Fuzzy Filename Matching
+
+The `--match-precision` option enables fuzzy matching of filenames using Levenshtein distance algorithm. This is useful when comparing directories with files that may have typos, slight variations, or systematic naming differences.
+
+### How It Works
+
+- **Threshold value**: A number from 0.0 to 1.0
+  - `1.0` (default): Only exact filename matches
+  - `0.8`: Allows ~20% character differences (recommended for typo detection)
+  - `0.5`: Allows ~50% character differences (very permissive)
+  - `0.0`: Matches any files (not recommended)
+
+- **Matching is based on filename only**, not the full path
+- **Exact matches are always preferred** over fuzzy matches
+- **One-to-one mapping**: Each right file can only match one left file
+
+### Use Cases
+
+1. **Typo detection**: Find files with misspelled names (e.g., "report.txt" vs "reprot.txt")
+2. **Version variations**: Match files with version numbers (e.g., "file_v1.txt" vs "file_v2.txt")
+3. **Renamed files**: Identify files that were slightly renamed between directories
+4. **Import cleanup**: Find near-duplicate files from different sources
+
+### Examples
+
+#### Detect typos in filenames
+
+```bash
+# Compare with fuzzy matching (80% similarity threshold)
+files /backup /current --match-precision 0.8 --verbose
+```
+
+Output shows fuzzy-matched files as "modified":
+```
+Modified (2):
+  ~ report.txt (matched with: reprot.txt)
+  ~ document.txt (matched with: documnet.txt)
+```
+
+#### Sync with fuzzy matching
+
+```bash
+# Sync files even if names have minor differences
+files sync /source /dest --match-precision 0.8 --verbose
+```
+
+This will:
+- Match "report.txt" (source) with "reprot.txt" (destination)
+- Update the file with correct content
+- Create new "report.txt" in destination
+
+#### Conservative fuzzy matching
+
+```bash
+# Use higher threshold (90%) for stricter matching
+files /dir1 /dir2 --match-precision 0.9
+```
+
+Only files with very similar names will match (e.g., "file1.txt" and "file2.txt" won't match, but "report.txt" and "reprot.txt" will).
 
 ## Examples
 

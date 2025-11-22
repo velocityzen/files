@@ -914,4 +914,229 @@ struct DirectorySyncTests {
         #expect(TestHelpers.fileExists(at: filesignorePath))
         #expect(TestHelpers.fileExists(at: rightDir.appendingPathComponent("data.txt")))
     }
+
+    // MARK: - Fuzzy Matching Tests
+
+    @Test("Fuzzy matching: sync files with similar names (one-way)")
+    func fuzzyMatchingOneWaySync() async throws {
+        let leftFiles = [
+            "report.txt": "original report",
+            "document.txt": "original document",
+        ]
+        let rightFiles = [
+            "reprot.txt": "typo version",  // typo of report.txt
+            "documnet.txt": "typo version",  // typo of document.txt
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let ignore = Ignore(patterns: [])
+
+        let stream = await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            mode: .oneWay,
+            ignore: ignore,
+            matchPrecision: 0.8  // Enable fuzzy matching
+        )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
+
+        // Should recognize the files as modified (fuzzy matched)
+        #expect(results.succeeded == 2)
+        #expect(results.failed == 0)
+        #expect(results.operations.count == 2)
+        #expect(results.operations.allSatisfy { $0.type == .update })
+
+        // With fuzzy matching, files with correct names are created/updated
+        let reportFile = rightDir.appendingPathComponent("report.txt")
+        let documentFile = rightDir.appendingPathComponent("document.txt")
+
+        #expect(TestHelpers.fileExists(at: reportFile))
+        #expect(TestHelpers.fileExists(at: documentFile))
+
+        let reportContent = try String(contentsOf: reportFile, encoding: .utf8)
+        let documentContent = try String(contentsOf: documentFile, encoding: .utf8)
+
+        #expect(reportContent == "original report")
+        #expect(documentContent == "original document")
+    }
+
+    @Test("Fuzzy matching: exact match preferred over fuzzy match")
+    func fuzzyMatchingPreferExact() async throws {
+        let leftFiles = [
+            "file.txt": "exact match content"
+        ]
+        let rightFiles = [
+            "file.txt": "old exact",
+            "flie.txt": "old typo",  // Similar but not exact
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let ignore = Ignore(patterns: [])
+
+        let stream = await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            mode: .oneWay,
+            ignore: ignore,
+            matchPrecision: 0.8
+        )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
+
+        // Should match exact file and leave the typo file alone
+        #expect(
+            results.operations.contains(where: {
+                $0.relativePath == "file.txt" && $0.type == .update
+            }))
+
+        // The typo file should still exist and be unchanged
+        let typoFile = rightDir.appendingPathComponent("flie.txt")
+        #expect(TestHelpers.fileExists(at: typoFile))
+        let typoContent = try String(contentsOf: typoFile, encoding: .utf8)
+        #expect(typoContent == "old typo")
+    }
+
+    @Test("Fuzzy matching: no match when below threshold")
+    func fuzzyMatchingBelowThreshold() async throws {
+        let leftFiles = [
+            "abc.txt": "content abc"
+        ]
+        let rightFiles = [
+            "xyz.txt": "content xyz"
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let ignore = Ignore(patterns: [])
+
+        let stream = await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            mode: .oneWay,
+            ignore: ignore,
+            matchPrecision: 0.9  // High threshold - these files won't match
+        )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
+
+        // Files should be treated as separate (copy, not update)
+        #expect(
+            results.operations.contains(where: { $0.relativePath == "abc.txt" && $0.type == .copy })
+        )
+
+        // Both files should exist
+        let abcFile = rightDir.appendingPathComponent("abc.txt")
+        let xyzFile = rightDir.appendingPathComponent("xyz.txt")
+        #expect(TestHelpers.fileExists(at: abcFile))
+        #expect(TestHelpers.fileExists(at: xyzFile))
+    }
+
+    @Test("Fuzzy matching: two-way sync with similar names")
+    func fuzzyMatchingTwoWaySync() async throws {
+        let leftFiles = [
+            "file1.txt": "left content"
+        ]
+        let rightFiles = [
+            "flie1.txt": "right content"  // typo of file1
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let ignore = Ignore(patterns: [])
+
+        let stream = await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            mode: .twoWay(conflictResolution: .keepNewest),
+            ignore: ignore,
+            matchPrecision: 0.8
+        )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
+
+        // Should recognize as a conflict and handle it
+        #expect(results.operations.count > 0)
+        // At least one operation should have occurred
+        #expect(results.succeeded + results.failed > 0)
+    }
+
+    @Test("Fuzzy matching: disabled by default (matchPrecision = 1.0)")
+    func fuzzyMatchingDisabledByDefault() async throws {
+        let leftFiles = [
+            "report.txt": "original"
+        ]
+        let rightFiles = [
+            "reprot.txt": "typo version"
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let ignore = Ignore(patterns: [])
+
+        // Default sync without matchPrecision parameter (should be 1.0)
+        let stream = await directorySync(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            mode: .oneWay,
+            ignore: ignore
+                // matchPrecision not specified, defaults to 1.0
+        )
+        var results: [OperationResult] = []
+        for await opResult in stream {
+            results.append(opResult)
+        }
+
+        // Files should be treated as separate (copy operation)
+        #expect(
+            results.operations.contains(where: {
+                $0.relativePath == "report.txt" && $0.type == .copy
+            }))
+
+        // Both files should exist in right directory
+        let reportFile = rightDir.appendingPathComponent("report.txt")
+        let typoFile = rightDir.appendingPathComponent("reprot.txt")
+        #expect(TestHelpers.fileExists(at: reportFile))
+        #expect(TestHelpers.fileExists(at: typoFile))
+    }
 }
