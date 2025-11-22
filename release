@@ -18,7 +18,7 @@ git add Sources/files/files.swift
 git commit -m "Bump version to $VERSION"
 
 # Create git tag
-git tag "v$VERSION"
+git tag "$VERSION"
 
 echo "📤 Pushing to GitHub..."
 
@@ -27,5 +27,5 @@ git push && git push --tags
 
 echo ""
 echo "✅ Version $VERSION released!"
-echo "🏷️  Tag: v$VERSION"
-echo "🔗 GitHub: https://github.com/velocityzen/Files/releases/tag/v$VERSION"
+echo "🏷️  Tag: $VERSION"
+echo "🔗 GitHub: https://github.com/velocityzen/Files/releases/tag/$VERSION"
