@@ -787,29 +787,29 @@ private func filesAreDifferent(_ path1: String, _ path2: String) async throws ->
 /// Compares two files to determine if they have similar sizes within a tolerance
 @concurrent
 private func filesAreSimilarSize(
-    _ path1: String,
-    _ path2: String,
+    _ left: String,
+    _ right: String,
     tolerance: Double
 ) async throws -> Bool {
     try await Task.detached {
         let fileManager = FileManager.default
 
-        let attrs1 = try fileManager.attributesOfItem(atPath: path1)
-        let attrs2 = try fileManager.attributesOfItem(atPath: path2)
+        let leftAttrs = try fileManager.attributesOfItem(atPath: left)
+        let rightAttrs = try fileManager.attributesOfItem(atPath: right)
 
-        guard let size1 = attrs1[.size] as? Int64,
-            let size2 = attrs2[.size] as? Int64
+        guard let leftSize = leftAttrs[.size] as? Int64,
+            let rightSize = rightAttrs[.size] as? Int64
         else {
             return false
         }
 
-        if size1 == 0 && size2 == 0 {
+        if leftSize == 0 && rightSize == 0 {
             return true
         }
 
-        let minSize = min(size1, size2)
+        let minSize = min(leftSize, rightSize)
         let allowedDifference = Double(minSize) * tolerance
-        let actualDifference = abs(Double(size1) - Double(size2))
+        let actualDifference = abs(Double(leftSize) - Double(rightSize))
 
         return actualDifference <= allowedDifference
     }.value
