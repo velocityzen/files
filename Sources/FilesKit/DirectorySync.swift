@@ -1,7 +1,7 @@
 import Foundation
 
-let COPY_CHUNK_SIZE = 1024 * 1024
-let MIN_SIZE_TO_CHUNK = COPY_CHUNK_SIZE * 10
+let copyChunkSize = 1024 * 1024
+let minSizeToChunk = copyChunkSize * 10
 
 public struct FileOperation: Sendable, Equatable, Hashable {
     public enum OperationType: Sendable, CustomStringConvertible {
@@ -126,21 +126,23 @@ public func directorySync(
         matchPrecision: matchPrecision
     )
 
-    if case .failure(let error) = diffResult {
-        let error = DirectorySyncError.from(error: error)
-        let operation = FileOperation.compareOperation(
-            leftPath: leftPath,
-            rightPath: rightPath,
-            error: "\(error)"
-        )
+    let diff: DirectoryDifference
+    switch diffResult {
+        case .success(let result):
+            diff = result
+        case .failure(let diffError):
+            let error = DirectorySyncError.from(error: diffError)
+            let operation = FileOperation.compareOperation(
+                leftPath: leftPath,
+                rightPath: rightPath,
+                error: "\(error)"
+            )
 
-        return .fastFail(
-            on: operation,
-            with: error,
-        )
+            return .fastFail(
+                on: operation,
+                with: error
+            )
     }
-
-    let diff = try! diffResult.get()
 
     // Plan sync operations based on mode
     let planResult = await planFileOperations(
@@ -151,20 +153,22 @@ public func directorySync(
         deletions: deletions
     )
 
-    if case .failure(let error) = planResult {
-        let operation = FileOperation.compareOperation(
-            leftPath: leftPath,
-            rightPath: rightPath,
-            error: "Planning failed: \(error)"
-        )
+    var operations: [FileOperation]
+    switch planResult {
+        case .success(let planned):
+            operations = planned
+        case .failure(let planError):
+            let operation = FileOperation.compareOperation(
+                leftPath: leftPath,
+                rightPath: rightPath,
+                error: "Planning failed: \(planError)"
+            )
 
-        return .fastFail(
-            on: operation,
-            with: error,
-        )
+            return .fastFail(
+                on: operation,
+                with: planError
+            )
     }
-
-    var operations = try! planResult.get()
 
     if rightMode == .leafFoldersOnly {
         operations += diff.onlyInRight
@@ -286,7 +290,6 @@ private func planTwoWaySync(
     rightPath: String,
     conflictResolution: ConflictResolution
 ) async -> Result<[FileOperation], DirectorySyncError> {
-    // Copy files only in left to right
     let leftToRightOps = diff.onlyInLeft.map {
         createFileOperation(
             type: .copy,
@@ -296,7 +299,6 @@ private func planTwoWaySync(
         )
     }
 
-    // Copy files only in right to left
     let rightToLeftOps = diff.onlyInRight.map {
         createFileOperation(
             type: .copy,
@@ -306,9 +308,34 @@ private func planTwoWaySync(
         )
     }
 
-    // Handle modified files based on conflict resolution strategy
-    var conflictOps: [FileOperation] = []
-    for relativePath in diff.modified {
+    let conflictResult = await resolveModifiedFiles(
+        modified: diff.modified,
+        leftPath: leftPath,
+        rightPath: rightPath,
+        conflictResolution: conflictResolution
+    )
+
+    switch conflictResult {
+        case .success(let conflictOps):
+            return .success(
+                (leftToRightOps + rightToLeftOps + conflictOps).sorted {
+                    $0.relativePath < $1.relativePath
+                })
+        case .failure(let error):
+            return .failure(error)
+    }
+}
+
+/// Resolves conflicts for all modified files during two-way sync
+private func resolveModifiedFiles(
+    modified: Set<String>,
+    leftPath: String,
+    rightPath: String,
+    conflictResolution: ConflictResolution
+) async -> Result<[FileOperation], DirectorySyncError> {
+    var operations: [FileOperation] = []
+
+    for relativePath in modified {
         let leftFile = URL(fileURLWithPath: leftPath)
             .appendingPathComponent(relativePath)
             .path(percentEncoded: false)
@@ -326,17 +353,14 @@ private func planTwoWaySync(
         switch result {
             case .success(let operation):
                 if let operation = operation {
-                    conflictOps.append(operation)
+                    operations.append(operation)
                 }
             case .failure(let error):
                 return .failure(error)
         }
     }
 
-    return .success(
-        (leftToRightOps + rightToLeftOps + conflictOps).sorted {
-            $0.relativePath < $1.relativePath
-        })
+    return .success(operations)
 }
 
 /// Resolves a conflict between two modified files based on modification dates
@@ -425,26 +449,6 @@ private func resolveConflict(
     }
 }
 
-/// Tracks progress state for sync operations
-private actor ProgressTracker {
-    private(set) var totalBytesTransferred: Int64 = 0
-    private let startTime = Date()
-
-    func addBytes(_ bytes: Int64) {
-        totalBytesTransferred += bytes
-    }
-
-    func calculateSpeed() -> Double {
-        let elapsed = Date().timeIntervalSince(startTime)
-        return elapsed > 0 ? Double(totalBytesTransferred) / elapsed : 0
-    }
-
-    func calculateSpeed(adding bytes: Int64) -> Double {
-        let elapsed = Date().timeIntervalSince(startTime)
-        return elapsed > 0 ? Double(totalBytesTransferred + bytes) / elapsed : 0
-    }
-}
-
 /// Executes sync operations and returns a stream of operation results
 private func executeFileOperationsStream(
     _ operations: [FileOperation]
@@ -466,35 +470,6 @@ private func executeFileOperations(
 
     for operation in operations {
         await executeFileOperation(operation, with: continuation)
-    }
-}
-
-/// Gets the size of a single operation
-private func getOperationSize(_ operation: FileOperation) -> Int64 {
-    guard let sourcePath = operation.left else { return 0 }
-    guard let attrs = try? FileManager.default.attributesOfItem(atPath: sourcePath) else {
-        return 0
-    }
-    return (attrs[.size] as? Int64) ?? 0
-}
-
-/// Calculates total bytes to transfer for all operations
-private func calculateTotalBytes(_ operations: [FileOperation]) async -> Int64 {
-    await withTaskGroup(of: Int64.self) { group in
-        for operation in operations {
-            group.addTask {
-                guard let sourcePath = operation.left else { return 0 }
-                guard let attrs = try? FileManager.default.attributesOfItem(atPath: sourcePath)
-                else { return 0 }
-                return (attrs[.size] as? Int64) ?? 0
-            }
-        }
-
-        var total: Int64 = 0
-        for await size in group {
-            total += size
-        }
-        return total
     }
 }
 
@@ -548,7 +523,7 @@ private func copyOperation(
             try FileManager.default.removeItem(atPath: operation.right)
         }
 
-        if fileSize < MIN_SIZE_TO_CHUNK {
+        if fileSize < minSizeToChunk {
             // For small files, use simple copy
             try FileManager.default.copyItem(atPath: left, toPath: operation.right)
             continuation.success(operation: operation, bytesTransferred: fileSize)
@@ -582,10 +557,16 @@ internal func copyFileWithProgress(
     expectedFileSize: Int64,
     continuation: AsyncStream<OperationResult>.Continuation
 ) {
-    let bufferSize = COPY_CHUNK_SIZE
+    let bufferSize = copyChunkSize
 
-    // we check that file exists vefore calling this function
-    guard let inputStream = InputStream(fileAtPath: operation.left!) else {
+    guard let left = operation.left else {
+        return continuation.failure(
+            operation: operation,
+            error: DirectorySyncError.operationFailed("No source path for copy operation")
+        )
+    }
+
+    guard let inputStream = InputStream(fileAtPath: left) else {
         return continuation.failure(
             operation: operation,
             error: DirectorySyncError.operationFailed("Failed to open source file")
@@ -635,7 +616,7 @@ internal func copyFileWithProgress(
         totalBytesRead += Int64(bytesRead)
 
         // Yield progress update only at intervals
-        if totalBytesRead - lastReportedBytes >= MIN_SIZE_TO_CHUNK {
+        if totalBytesRead - lastReportedBytes >= minSizeToChunk {
             continuation.success(operation: operation, bytesTransferred: totalBytesRead)
             lastReportedBytes = totalBytesRead
         }

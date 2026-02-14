@@ -199,45 +199,74 @@ private func fullComparison(
     let filesRight = try await scanDirectory(
         at: rightPath, recursive: recursive, ignore: ignore)
 
-    // If matchPrecision is 1.0, use exact matching
     if matchPrecision >= 1.0 {
-        let onlyInLeft = filesLeft.subtracting(filesRight)
-        let onlyInRight = filesRight.subtracting(filesLeft)
-        let common = filesLeft.intersection(filesRight)
-
-        let modified = try await findModifiedFiles(
-            common: common,
+        return try await exactComparison(
             leftPath: leftPath,
-            rightPath: rightPath
-        )
-
-        return DirectoryDifference(
-            onlyInLeft: onlyInLeft,
-            onlyInRight: onlyInRight,
-            common: common.subtracting(modified),
-            modified: modified
+            rightPath: rightPath,
+            filesLeft: filesLeft,
+            filesRight: filesRight
         )
     }
 
-    // Use fuzzy matching
+    return try await fuzzyComparison(
+        leftPath: leftPath,
+        rightPath: rightPath,
+        filesLeft: filesLeft,
+        filesRight: filesRight,
+        matchPrecision: matchPrecision
+    )
+}
+
+/// Compares directories using exact filename matching
+@concurrent
+private func exactComparison(
+    leftPath: String,
+    rightPath: String,
+    filesLeft: Set<String>,
+    filesRight: Set<String>
+) async throws -> DirectoryDifference {
+    let onlyInLeft = filesLeft.subtracting(filesRight)
+    let onlyInRight = filesRight.subtracting(filesLeft)
+    let common = filesLeft.intersection(filesRight)
+
+    let modified = try await findModifiedFiles(
+        common: common,
+        leftPath: leftPath,
+        rightPath: rightPath
+    )
+
+    return DirectoryDifference(
+        onlyInLeft: onlyInLeft,
+        onlyInRight: onlyInRight,
+        common: common.subtracting(modified),
+        modified: modified
+    )
+}
+
+/// Compares directories using fuzzy filename matching for unmatched files
+@concurrent
+private func fuzzyComparison(
+    leftPath: String,
+    rightPath: String,
+    filesLeft: Set<String>,
+    filesRight: Set<String>,
+    matchPrecision: Double
+) async throws -> DirectoryDifference {
     let exactCommon = filesLeft.intersection(filesRight)
     let unmatchedLeft = filesLeft.subtracting(filesRight)
     let unmatchedRight = filesRight.subtracting(filesLeft)
 
-    // Find fuzzy matches among unmatched files
     let fuzzyMatches = findFuzzyMatches(
         leftFiles: unmatchedLeft,
         rightFiles: unmatchedRight,
         threshold: matchPrecision
     )
 
-    // Build sets for the result
     var common = exactCommon
     var modified = Set<String>()
     var onlyInLeft = unmatchedLeft
     var onlyInRight = unmatchedRight
 
-    // Check exact matches for modifications
     let exactModified = try await findModifiedFiles(
         common: exactCommon,
         leftPath: leftPath,
@@ -246,9 +275,7 @@ private func fullComparison(
     modified.formUnion(exactModified)
     common.subtract(exactModified)
 
-    // Process fuzzy matches
     for (leftFile, rightFile) in fuzzyMatches {
-        // Check if the fuzzy-matched files have different content
         let leftFullPath = URL(fileURLWithPath: leftPath)
             .appendingPathComponent(leftFile)
             .path(percentEncoded: false)

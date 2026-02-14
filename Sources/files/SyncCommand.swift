@@ -79,7 +79,7 @@ extension Files {
                 : .oneWay
 
             // Setup progress display for text format
-            let progress = getPrintProgress(format == .text && !dryRun)
+            let progress = getPrintProgress(format != .text || dryRun)
 
             let progressStream = await directorySync(
                 left: sourcePath,

@@ -71,7 +71,10 @@ enum TestHelpers {
     static func getModificationDate(of url: URL) throws -> Date {
         let attrs = try FileManager.default.attributesOfItem(
             atPath: url.path(percentEncoded: false))
-        return attrs[.modificationDate] as! Date
+        guard let date = attrs[.modificationDate] as? Date else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return date
     }
 
     /// Creates a JSON file from a DirectoryDifference
