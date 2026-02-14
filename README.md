@@ -10,8 +10,10 @@ A fast and efficient command-line tool for comparing and synchronizing directori
 - **Fast concurrent processing** - Uses Swift's modern concurrency for optimal performance
 - **Smart file comparison** - Quickly identifies identical, modified, and unique files
 - **Fuzzy filename matching** - Match files with similar names using configurable precision threshold
+- **Fuzzy size tolerance** - Treat fuzzy-matched files with similar sizes as renamed rather than modified
 - **Clear exit codes** - Easy integration with scripts and CI/CD pipelines
 - **Pattern-based file filtering** - Use .filesignore to exclude files from operations
+- **Configuration files** - Use .files to set default options per directory
 
 ### Directory Synchronization
 - **One-way sync** - Mirror source directory to destination
@@ -57,12 +59,13 @@ Patterns from all found files are merged together.
 
 ### Default Ignored Files
 
-By default, `.filesignore` files themselves are always ignored and will not be copied during sync operations. This prevents the ignore configuration from being propagated to destination directories.
+By default, `.filesignore` and `.files` are always ignored and will not be copied during sync operations. This prevents configuration files from being propagated to destination directories.
 
-To explicitly include `.filesignore` in sync operations, add a negation pattern:
+To explicitly include them in sync operations, add negation patterns:
 
 ```
 !.filesignore
+!.files
 ```
 
 ### Example .filesignore
@@ -107,6 +110,66 @@ files compare dir1 dir2 --no-ignore
 files sync source dest --no-ignore
 ```
 
+## Configuration with .files
+
+Instead of passing options via CLI flags every time, you can create a `.files` configuration file in either the left or right directory. This is especially useful for directories that always need the same settings.
+
+### .files File Locations
+
+The tool looks for `.files` in two locations:
+
+1. **Source/left directory**: `<source-dir>/.files`
+2. **Destination/right directory**: `<dest-dir>/.files`
+
+Right directory values override left directory values. CLI flags override all `.files` settings.
+
+### Format
+
+Simple `key = value` format, one per line. Comments start with `#`:
+
+```
+# Fuzzy matching settings
+matchPrecision = 0.8
+sizeTolerance = 0.2
+
+# Sync behavior
+recursive = true
+deletions = false
+```
+
+### Available Options
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `matchPrecision` | `0.0–1.0` | Fuzzy filename matching threshold |
+| `sizeTolerance` | `0.0–1.0` | File size difference tolerance for fuzzy matches |
+| `recursive` | `true/false` | Scan subdirectories recursively |
+| `deletions` | `true/false` | Delete files not in source (one-way sync) |
+| `showMoreRight` | `true/false` | Show additional right-side diff info |
+| `dryRun` | `true/false` | Preview changes without applying |
+| `verbose` | `true/false` | Show detailed output |
+| `format` | `text/json/summary` | Output format |
+| `twoWay` | `true/false` | Enable two-way sync |
+| `conflictResolution` | `newest/left/right/skip` | Conflict resolution strategy |
+| `noIgnore` | `true/false` | Disable .filesignore loading |
+
+Boolean values accept: `true`/`false`, `yes`/`no`, `1`/`0`.
+
+See [.files.example](.files.example) for a complete example with documentation.
+
+### Disabling .files
+
+You can disable `.files` configuration loading with the `--no-config` flag:
+
+```bash
+files compare dir1 dir2 --no-config
+files sync source dest --no-config
+```
+
+### Default Behavior
+
+Like `.filesignore`, the `.files` configuration file is automatically excluded from comparison and sync operations. It will not be copied to destination directories.
+
 ## Usage
 
 Files has three main commands: `compare` (default), `sync`, and `cp`.
@@ -125,9 +188,11 @@ files <left-directory> <right-directory> [options]
 
 - `--recursive` / `--no-recursive` - Scan subdirectories recursively (default: recursive)
 - `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching). Lower values enable matching files with similar names using Levenshtein distance
+- `--size-tolerance TOLERANCE` - File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)
 - `--verbose`, `-v` - Show detailed output with all file paths
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
 - `--no-ignore` - Disable .filesignore pattern matching
+- `--no-config` - Disable .files configuration loading
 - `--help`, `-h` - Show help message
 - `--version` - Show version information
 
@@ -151,10 +216,12 @@ This is a convenience command equivalent to `files sync --no-deletions` with one
 
 - `--show-more-right` - Scan leaf directories on the right side for additional diff information
 - `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching)
+- `--size-tolerance TOLERANCE` - File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
 - `--no-ignore` - Disable .filesignore pattern matching
+- `--no-config` - Disable .files configuration loading
 
 #### Example
 
@@ -182,10 +249,12 @@ files sync <source-directory> <destination-directory> [options]
 - `--deletions` - Delete files in destination that don't exist in source (one-way sync only, default: false)
 - `--show-more-right` - Scan leaf directories on the right side for additional diff information (one-way sync without deletions only)
 - `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching). Lower values enable matching files with similar names using Levenshtein distance
+- `--size-tolerance TOLERANCE` - File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
 - `--no-ignore` - Disable .filesignore pattern matching
+- `--no-config` - Disable .files configuration loading
 
 #### Sync Modes
 
@@ -223,6 +292,18 @@ The `--match-precision` option enables fuzzy matching of filenames using Levensh
 - **Exact matches are always preferred** over fuzzy matches
 - **One-to-one mapping**: Each right file can only match one left file
 
+### Size Tolerance
+
+When fuzzy matching is enabled, matched files with different names will almost always have different content. The `--size-tolerance` option controls how to handle these pairs:
+
+- **`0.0` (default)**: Exact content comparison — files are compared byte-by-byte
+- **`0.2`**: Files with sizes within 20% of each other are treated as the same file (renamed)
+- **`0.5`**: Files with sizes within 50% are treated as the same file
+
+Formula: files match if `abs(size1 - size2) <= min(size1, size2) * tolerance`
+
+This is useful for detecting renamed files without treating them as modified.
+
 ### Use Cases
 
 1. **Typo detection**: Find files with misspelled names (e.g., "report.txt" vs "reprot.txt")
@@ -257,6 +338,15 @@ This will:
 - Match "report.txt" (source) with "reprot.txt" (destination)
 - Update the file with correct content
 - Create new "report.txt" in destination
+
+#### Fuzzy matching with size tolerance
+
+```bash
+# Match similar filenames and treat similar-sized files as renamed
+files compare /dir1 /dir2 --match-precision 0.8 --size-tolerance 0.2
+```
+
+This matches files with 80% filename similarity. Fuzzy-matched pairs with sizes within 20% of each other are treated as the same file (renamed), not as modified.
 
 #### Conservative fuzzy matching
 

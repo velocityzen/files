@@ -1,0 +1,48 @@
+# .files configuration example
+# Place this file as .files in either the left or right directory.
+# Right directory values override left directory values.
+# CLI flags override all .files settings.
+# Use --no-config to disable .files loading.
+
+# Fuzzy filename matching threshold (0.0 to 1.0)
+# 1.0 = exact matches only, lower values allow fuzzy matching
+# based on Levenshtein distance
+# matchPrecision = 0.8
+
+# File size difference tolerance for fuzzy-matched files (0.0 to 1.0)
+# 0.0 = exact content comparison
+# Higher values allow more size difference (e.g., 0.2 = 20%)
+# Only applies to fuzzy-matched pairs (matchPrecision < 1.0)
+# sizeTolerance = 0.2
+
+# Scan subdirectories recursively (true/false)
+# recursive = true
+
+# Delete files in destination that don't exist in source
+# One-way sync only
+# deletions = false
+
+# Scan leaf directories on the right side for additional diff information
+# One-way sync without deletions only
+# showMoreRight = false
+
+# Preview changes without applying them (true/false)
+# dryRun = false
+
+# Show detailed output with all operations (true/false)
+# verbose = false
+
+# Output format: text, json, summary
+# format = text
+
+# Enable two-way sync (true/false)
+# twoWay = false
+
+# Conflict resolution strategy for two-way sync:
+# newest, left, right, skip
+# conflictResolution = newest
+
+# Disable .filesignore pattern matching (true/false)
+# noIgnore = false
+
+# Boolean values accept: true/false, yes/no, 1/0

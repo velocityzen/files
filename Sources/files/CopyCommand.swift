@@ -13,6 +13,9 @@ extension Files {
                 This command will:
                 - Copy files that exist only in source
                 - Update files that are modified (different content)
+
+                Options can also be set in a .files configuration file placed in either directory.
+                CLI flags override .files settings. Use --no-config to disable .files loading.
                 """
         )
 
@@ -41,19 +44,36 @@ extension Files {
             help:
                 "Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching)"
         )
-        var matchPrecision: Double = 1.0
+        var matchPrecision: Double?
 
         @Option(
             name: .long,
             help:
                 "File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)"
         )
-        var sizeTolerance: Double = 0.0
+        var sizeTolerance: Double?
 
         @Flag(name: .long, help: "Disable .filesignore pattern matching")
         var noIgnore: Bool = false
 
+        @Flag(name: .long, help: "Disable .files configuration loading")
+        var noConfig: Bool = false
+
         mutating func run() async throws {
+            let config =
+                noConfig
+                ? Config()
+                : await Config.load(leftPath: sourcePath, rightPath: destinationPath)
+
+            let showMoreRight = config.showMoreRight ?? showMoreRight
+            let dryRun = config.dryRun ?? dryRun
+            let verbose = config.verbose ?? verbose
+            let format =
+                config.format.flatMap { OutputFormat(rawValue: $0) } ?? format
+            let matchPrecision = matchPrecision ?? config.matchPrecision ?? 1.0
+            let sizeTolerance = sizeTolerance ?? config.sizeTolerance ?? 0.0
+            let noIgnore = config.noIgnore ?? noIgnore
+
             if dryRun {
                 print("🔍 DRY RUN - No changes will be made\n")
             }

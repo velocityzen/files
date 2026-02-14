@@ -150,22 +150,25 @@ struct IgnoreTests {
         #expect(!patterns.shouldIgnore("file12.txt"))
     }
 
-    @Test(".filesignore is always ignored by default")
+    @Test(".filesignore and .files are always ignored by default")
     func testFilesignoreIgnoredByDefault() {
-        // Even with empty patterns, .filesignore should be ignored
+        // Even with empty patterns, .filesignore and .files should be ignored
         let emptyPatterns = Ignore(patterns: [])
         #expect(emptyPatterns.shouldIgnore(".filesignore"))
+        #expect(emptyPatterns.shouldIgnore(".files"))
 
-        // With other patterns, .filesignore should still be ignored
+        // With other patterns, .filesignore and .files should still be ignored
         let withPatterns = Ignore(patterns: ["*.log", "*.tmp"])
         #expect(withPatterns.shouldIgnore(".filesignore"))
+        #expect(withPatterns.shouldIgnore(".files"))
 
-        // .filesignore in subdirectories should also be ignored
+        // In subdirectories should also be ignored
         #expect(withPatterns.shouldIgnore("subdir/.filesignore"))
         #expect(withPatterns.shouldIgnore("path/to/.filesignore"))
+        #expect(withPatterns.shouldIgnore("subdir/.files"))
+        #expect(withPatterns.shouldIgnore("path/to/.files"))
 
         // But other files starting with .files should not be ignored
-        #expect(!withPatterns.shouldIgnore(".files"))
         #expect(!withPatterns.shouldIgnore(".filesignore.backup"))
     }
 
