@@ -103,6 +103,13 @@ extension Files {
             let sizeTolerance = sizeTolerance ?? config.sizeTolerance ?? 0.0
             let noIgnore = config.noIgnore ?? noIgnore
 
+            let ignore =
+                noIgnore
+                ? Ignore()
+                : await Ignore.load(leftPath: sourcePath, rightPath: destinationPath)
+
+            OutputFormatter.printConfig(config, ignore: ignore, verbose: verbose)
+
             if dryRun {
                 print("🔍 DRY RUN - No changes will be made\n")
             }
@@ -123,7 +130,7 @@ extension Files {
                 deletions: deletions,
                 showMoreRight: showMoreRight,
                 dryRun: dryRun,
-                ignore: noIgnore ? Ignore() : nil,
+                ignore: ignore,
                 matchPrecision: matchPrecision,
                 sizeTolerance: sizeTolerance
             )

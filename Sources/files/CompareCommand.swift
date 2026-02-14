@@ -68,11 +68,18 @@ extension Files {
             let sizeTolerance = sizeTolerance ?? config.sizeTolerance ?? 0.0
             let noIgnore = config.noIgnore ?? noIgnore
 
+            let ignore =
+                noIgnore
+                ? Ignore()
+                : await Ignore.load(leftPath: leftPath, rightPath: rightPath)
+
+            OutputFormatter.printConfig(config, ignore: ignore, verbose: verbose)
+
             let diffResult = await directoryDifference(
                 left: leftPath,
                 right: rightPath,
                 recursive: recursive,
-                ignore: noIgnore ? Ignore() : nil,
+                ignore: ignore,
                 matchPrecision: matchPrecision,
                 sizeTolerance: sizeTolerance
             )

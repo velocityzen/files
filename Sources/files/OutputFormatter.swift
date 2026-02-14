@@ -9,6 +9,33 @@ enum OutputFormat: String, ExpressibleByArgument {
 }
 
 enum OutputFormatter {
+    // MARK: - Config Printing
+
+    static func printConfig(_ config: Config, ignore: Ignore, verbose: Bool) {
+        var hasOutput = false
+
+        if config.hasLoadedFiles {
+            for file in config.loadedFiles {
+                print("Using config: \(file)")
+            }
+            if verbose {
+                print("Config settings:\n\(config)")
+            }
+            hasOutput = true
+        }
+
+        if verbose && ignore.hasLoadedFiles {
+            for file in ignore.loadedFiles {
+                print("Using ignore: \(file)")
+            }
+            hasOutput = true
+        }
+
+        if hasOutput {
+            print("")
+        }
+    }
+
     // MARK: - Error Printing
 
     static func printError(_ error: DirectorySyncError) {

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Configuration loaded from .files configuration files
-public struct Config: Sendable {
+public struct Config: Sendable, CustomStringConvertible {
     public var matchPrecision: Double?
     public var sizeTolerance: Double?
     public var recursive: Bool?
@@ -13,6 +13,28 @@ public struct Config: Sendable {
     public var twoWay: Bool?
     public var conflictResolution: String?
     public var noIgnore: Bool?
+
+    /// Paths of .files that were successfully loaded
+    public var loadedFiles: [String] = []
+
+    /// Whether any configuration was loaded from files
+    public var hasLoadedFiles: Bool { !loadedFiles.isEmpty }
+
+    public var description: String {
+        var lines: [String] = []
+        if let v = matchPrecision { lines.append("  matchPrecision = \(v)") }
+        if let v = sizeTolerance { lines.append("  sizeTolerance = \(v)") }
+        if let v = recursive { lines.append("  recursive = \(v)") }
+        if let v = deletions { lines.append("  deletions = \(v)") }
+        if let v = showMoreRight { lines.append("  showMoreRight = \(v)") }
+        if let v = dryRun { lines.append("  dryRun = \(v)") }
+        if let v = verbose { lines.append("  verbose = \(v)") }
+        if let v = format { lines.append("  format = \(v)") }
+        if let v = twoWay { lines.append("  twoWay = \(v)") }
+        if let v = conflictResolution { lines.append("  conflictResolution = \(v)") }
+        if let v = noIgnore { lines.append("  noIgnore = \(v)") }
+        return lines.joined(separator: "\n")
+    }
 
     /// Creates an empty Config instance with no values set
     public init() {}
@@ -29,15 +51,15 @@ public struct Config: Sendable {
                 .path(percentEncoded: false),
         ]
 
-        let configs = await withTaskGroup(of: (Int, Config?).self) { group in
+        let configs = await withTaskGroup(of: (Int, String, Config?).self) { group in
             for (index, path) in filePaths.enumerated() {
                 group.addTask {
                     let config = await loadFromFile(path)
-                    return (index, config)
+                    return (index, path, config)
                 }
             }
 
-            var results: [(Int, Config?)] = []
+            var results: [(Int, String, Config?)] = []
             for await result in group {
                 results.append(result)
             }
@@ -46,9 +68,10 @@ public struct Config: Sendable {
 
         let sortedConfigs = configs.sorted { $0.0 < $1.0 }
         var merged = Config()
-        for (_, config) in sortedConfigs {
+        for (_, path, config) in sortedConfigs {
             if let config {
                 merged = merged.merged(with: config)
+                merged.loadedFiles.append(path)
             }
         }
 

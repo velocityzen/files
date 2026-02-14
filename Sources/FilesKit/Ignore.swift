@@ -4,6 +4,12 @@ import Foundation
 public struct Ignore: Sendable {
     private let patterns: [Pattern]
 
+    /// Paths of .filesignore files that were successfully loaded
+    public var loadedFiles: [String] = []
+
+    /// Whether any ignore patterns were loaded from files
+    public var hasLoadedFiles: Bool { !loadedFiles.isEmpty }
+
     private struct Pattern: Sendable {
         let original: String
         let isNegation: Bool
@@ -169,15 +175,15 @@ public struct Ignore: Sendable {
         )
 
         // Load all files in parallel
-        let allPatternArrays = await withTaskGroup(of: (Int, [String]).self) { group in
+        let allPatternArrays = await withTaskGroup(of: (Int, String, [String]?).self) { group in
             for (index, path) in filePaths.enumerated() {
                 group.addTask {
-                    let patterns = await loadPatternsFromFile(path) ?? []
-                    return (index, patterns)
+                    let patterns = await loadPatternsFromFile(path)
+                    return (index, path, patterns)
                 }
             }
 
-            var results: [(Int, [String])] = []
+            var results: [(Int, String, [String]?)] = []
             for await result in group {
                 results.append(result)
             }
@@ -185,9 +191,16 @@ public struct Ignore: Sendable {
         }
 
         let sortedResults = allPatternArrays.sorted { $0.0 < $1.0 }
-        let allPatterns = sortedResults.flatMap { $0.1 }
+        let allPatterns = sortedResults.compactMap(\.2).flatMap { $0 }
 
-        return Ignore(patterns: allPatterns)
+        var ignore = Ignore(patterns: allPatterns)
+        for (_, path, patterns) in sortedResults {
+            if patterns != nil {
+                ignore.loadedFiles.append(path)
+            }
+        }
+
+        return ignore
     }
 
     /// Loads patterns from a .filesignore file asynchronously
