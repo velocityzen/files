@@ -96,6 +96,7 @@ public enum DirectorySyncError: Error, Sendable {
 ///   - showMoreRight: If true, scan leaf directories on the right side for additional diff information (one-way sync without deletions only, default: false)
 ///   - dryRun: If true, only plan operations without executing them (default: false)
 ///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
+///   - sizeTolerance: Maximum allowed file size difference ratio for fuzzy-matched files (0.0 to 1.0, default: 0.0)
 /// - Returns: An AsyncStream that yields OperationResult for each completed operation
 /// - Note: If directory validation fails, the stream will yield a single initialization error and finish
 public func directorySync(
@@ -107,7 +108,8 @@ public func directorySync(
     showMoreRight: Bool = false,
     dryRun: Bool = false,
     ignore: Ignore? = nil,
-    matchPrecision: Double = 1.0
+    matchPrecision: Double = 1.0,
+    sizeTolerance: Double = 0.0
 ) async -> AsyncStream<OperationResult> {
     let rightMode: IncludeOnlyInRight =
         switch mode {
@@ -123,7 +125,8 @@ public func directorySync(
         recursive: recursive,
         includeOnlyInRight: rightMode,
         ignore: ignore,
-        matchPrecision: matchPrecision
+        matchPrecision: matchPrecision,
+        sizeTolerance: sizeTolerance
     )
 
     let diff: DirectoryDifference

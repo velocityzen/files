@@ -101,6 +101,9 @@ public enum IncludeOnlyInRight: Sendable {
 ///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
 ///   - matchPrecision: Similarity threshold for fuzzy file matching (0.0 to 1.0, default: 1.0).
 ///                     1.0 means exact matches only. Lower values enable fuzzy matching based on Levenshtein distance.
+///   - sizeTolerance: Maximum allowed file size difference ratio for fuzzy-matched files (0.0 to 1.0, default: 0.0).
+///                    Only applies to fuzzy-matched pairs. 0.0 means exact content comparison.
+///                    Higher values allow more size difference (e.g., 0.2 allows 20% size difference).
 /// - Returns: A `Result` containing either the `DirectoryDifference` or a `DirectoryDifferenceError`
 public func directoryDifference(
     left leftPath: String,
@@ -108,7 +111,8 @@ public func directoryDifference(
     recursive: Bool = true,
     includeOnlyInRight: IncludeOnlyInRight = .all,
     ignore: Ignore? = nil,
-    matchPrecision: Double = 1.0
+    matchPrecision: Double = 1.0,
+    sizeTolerance: Double = 0.0
 ) async -> Result<DirectoryDifference, DirectoryDifferenceError> {
     do {
         try validateDirectories(leftPath: leftPath, rightPath: rightPath)
@@ -142,14 +146,16 @@ public func directoryDifference(
                         filesLeft: filesLeft,
                         recursive: recursive,
                         ignore: patterns,
-                        matchPrecision: matchPrecision
+                        matchPrecision: matchPrecision,
+                        sizeTolerance: sizeTolerance
                     )
                 case .none:
                     try await optimizedComparison(
                         leftPath: leftPath,
                         rightPath: rightPath,
                         filesLeft: filesLeft,
-                        matchPrecision: matchPrecision
+                        matchPrecision: matchPrecision,
+                        sizeTolerance: sizeTolerance
                     )
                 case .leafFoldersOnly:
                     try await leafFoldersComparison(
@@ -157,7 +163,8 @@ public func directoryDifference(
                         rightPath: rightPath,
                         filesLeft: filesLeft,
                         ignore: patterns,
-                        matchPrecision: matchPrecision
+                        matchPrecision: matchPrecision,
+                        sizeTolerance: sizeTolerance
                     )
             }
         return .success(diff)
@@ -194,7 +201,8 @@ private func fullComparison(
     filesLeft: Set<String>,
     recursive: Bool,
     ignore: Ignore,
-    matchPrecision: Double
+    matchPrecision: Double,
+    sizeTolerance: Double
 ) async throws -> DirectoryDifference {
     let filesRight = try await scanDirectory(
         at: rightPath, recursive: recursive, ignore: ignore)
@@ -213,7 +221,8 @@ private func fullComparison(
         rightPath: rightPath,
         filesLeft: filesLeft,
         filesRight: filesRight,
-        matchPrecision: matchPrecision
+        matchPrecision: matchPrecision,
+        sizeTolerance: sizeTolerance
     )
 }
 
@@ -250,7 +259,8 @@ private func fuzzyComparison(
     rightPath: String,
     filesLeft: Set<String>,
     filesRight: Set<String>,
-    matchPrecision: Double
+    matchPrecision: Double,
+    sizeTolerance: Double
 ) async throws -> DirectoryDifference {
     let exactCommon = filesLeft.intersection(filesRight)
     let unmatchedLeft = filesLeft.subtracting(filesRight)
@@ -283,7 +293,13 @@ private func fuzzyComparison(
             .appendingPathComponent(rightFile)
             .path(percentEncoded: false)
 
-        let isDifferent = try await filesAreDifferent(leftFullPath, rightFullPath)
+        let isDifferent =
+            if sizeTolerance > 0 {
+                try await !filesAreSimilarSize(
+                    leftFullPath, rightFullPath, tolerance: sizeTolerance)
+            } else {
+                try await filesAreDifferent(leftFullPath, rightFullPath)
+            }
 
         if isDifferent {
             modified.insert(leftFile)
@@ -309,7 +325,8 @@ private func optimizedComparison(
     leftPath: String,
     rightPath: String,
     filesLeft: Set<String>,
-    matchPrecision: Double
+    matchPrecision: Double,
+    sizeTolerance: Double
 ) async throws -> DirectoryDifference {
     // If matchPrecision is 1.0, use exact matching
     if matchPrecision >= 1.0 {
@@ -366,7 +383,13 @@ private func optimizedComparison(
             .appendingPathComponent(rightFile)
             .path(percentEncoded: false)
 
-        let isDifferent = try await filesAreDifferent(leftFullPath, rightFullPath)
+        let isDifferent =
+            if sizeTolerance > 0 {
+                try await !filesAreSimilarSize(
+                    leftFullPath, rightFullPath, tolerance: sizeTolerance)
+            } else {
+                try await filesAreDifferent(leftFullPath, rightFullPath)
+            }
 
         if isDifferent {
             modified.insert(leftFile)
@@ -392,7 +415,8 @@ private func leafFoldersComparison(
     rightPath: String,
     filesLeft: Set<String>,
     ignore: Ignore,
-    matchPrecision: Double
+    matchPrecision: Double,
+    sizeTolerance: Double
 ) async throws -> DirectoryDifference {
     // Derive leaf directories from the files we already scanned
     let leftLeafDirs = findLeafDirectoriesFromFiles(filesLeft)
@@ -466,7 +490,13 @@ private func leafFoldersComparison(
             .appendingPathComponent(rightFile)
             .path(percentEncoded: false)
 
-        let isDifferent = try await filesAreDifferent(leftFullPath, rightFullPath)
+        let isDifferent =
+            if sizeTolerance > 0 {
+                try await !filesAreSimilarSize(
+                    leftFullPath, rightFullPath, tolerance: sizeTolerance)
+            } else {
+                try await filesAreDifferent(leftFullPath, rightFullPath)
+            }
 
         if isDifferent {
             modified.insert(leftFile)
@@ -751,6 +781,37 @@ private func filesAreDifferent(_ path1: String, _ path2: String) async throws ->
         }
 
         return data1 != data2
+    }.value
+}
+
+/// Compares two files to determine if they have similar sizes within a tolerance
+@concurrent
+private func filesAreSimilarSize(
+    _ path1: String,
+    _ path2: String,
+    tolerance: Double
+) async throws -> Bool {
+    try await Task.detached {
+        let fileManager = FileManager.default
+
+        let attrs1 = try fileManager.attributesOfItem(atPath: path1)
+        let attrs2 = try fileManager.attributesOfItem(atPath: path2)
+
+        guard let size1 = attrs1[.size] as? Int64,
+            let size2 = attrs2[.size] as? Int64
+        else {
+            return false
+        }
+
+        if size1 == 0 && size2 == 0 {
+            return true
+        }
+
+        let minSize = min(size1, size2)
+        let allowedDifference = Double(minSize) * tolerance
+        let actualDifference = abs(Double(size1) - Double(size2))
+
+        return actualDifference <= allowedDifference
     }.value
 }
 

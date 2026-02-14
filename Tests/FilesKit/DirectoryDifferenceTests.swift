@@ -1201,3 +1201,181 @@ struct JSONComparisonTests {
         #expect(diff.common.contains("a/f/file3.txt"))
     }
 }
+
+// MARK: - Fuzzy Size Matching Tests
+
+@Suite("Fuzzy Size Matching")
+struct FuzzySizeMatchingTests {
+    @Test("Fuzzy-matched files with similar sizes treated as common")
+    func similarSizesTreatedAsCommon() async throws {
+        let leftFiles = ["report.txt": String(repeating: "a", count: 100)]
+        let rightFiles = ["reprot.txt": String(repeating: "b", count: 110)]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            matchPrecision: 0.8,
+            sizeTolerance: 0.2
+        ).unwrap()
+
+        #expect(diff.common.contains("report.txt"))
+        #expect(diff.onlyInLeft.isEmpty)
+        #expect(diff.modified.isEmpty)
+    }
+
+    @Test("Fuzzy-matched files with very different sizes treated as modified")
+    func differentSizesTreatedAsModified() async throws {
+        let leftFiles = ["report.txt": String(repeating: "a", count: 100)]
+        let rightFiles = ["reprot.txt": String(repeating: "b", count: 500)]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            matchPrecision: 0.8,
+            sizeTolerance: 0.2
+        ).unwrap()
+
+        #expect(diff.modified.contains("report.txt"))
+        #expect(diff.common.isEmpty)
+    }
+
+    @Test("Default sizeTolerance uses exact content comparison")
+    func defaultSizeToleranceUsesExactComparison() async throws {
+        let leftFiles = ["report.txt": "same content"]
+        let rightFiles = ["reprot.txt": "same content"]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        // With sizeTolerance 0.0 (default), uses exact byte comparison
+        // Same content → common
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            matchPrecision: 0.8
+        ).unwrap()
+
+        #expect(diff.common.contains("report.txt"))
+    }
+
+    @Test("Default sizeTolerance detects different content as modified")
+    func defaultSizeToleranceDetectsDifferences() async throws {
+        let leftFiles = ["report.txt": "content A"]
+        let rightFiles = ["reprot.txt": "content B"]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            matchPrecision: 0.8
+        ).unwrap()
+
+        #expect(diff.modified.contains("report.txt"))
+    }
+
+    @Test("Both empty files with size tolerance treated as common")
+    func emptyFilesWithSizeTolerance() async throws {
+        let leftFiles = ["report.txt": ""]
+        let rightFiles = ["reprot.txt": ""]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            matchPrecision: 0.8,
+            sizeTolerance: 0.2
+        ).unwrap()
+
+        #expect(diff.common.contains("report.txt"))
+    }
+
+    @Test("Identical sizes with size tolerance treated as common")
+    func identicalSizesWithSizeTolerance() async throws {
+        let leftFiles = ["report.txt": String(repeating: "a", count: 200)]
+        let rightFiles = ["reprot.txt": String(repeating: "b", count: 200)]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            matchPrecision: 0.8,
+            sizeTolerance: 0.2
+        ).unwrap()
+
+        #expect(diff.common.contains("report.txt"))
+    }
+
+    @Test("Size tolerance does not affect exact name matches")
+    func sizeToleranceDoesNotAffectExactMatches() async throws {
+        let leftFiles = [
+            "same.txt": "short",
+            "report.txt": String(repeating: "a", count: 100),
+        ]
+        let rightFiles = [
+            "same.txt": "much longer content here",
+            "reprot.txt": String(repeating: "b", count: 110),
+        ]
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        let diff = try await directoryDifference(
+            left: leftDir.path(percentEncoded: false),
+            right: rightDir.path(percentEncoded: false),
+            matchPrecision: 0.8,
+            sizeTolerance: 0.5
+        ).unwrap()
+
+        // Exact match uses content comparison — different content → modified
+        #expect(diff.modified.contains("same.txt"))
+        // Fuzzy match uses size tolerance — similar sizes → common
+        #expect(diff.common.contains("report.txt"))
+    }
+}

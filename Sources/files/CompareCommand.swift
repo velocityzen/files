@@ -38,6 +38,13 @@ extension Files {
         )
         var matchPrecision: Double = 1.0
 
+        @Option(
+            name: .long,
+            help:
+                "File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)"
+        )
+        var sizeTolerance: Double = 0.0
+
         @Flag(name: .long, help: "Disable .filesignore pattern matching")
         var noIgnore: Bool = false
 
@@ -47,7 +54,8 @@ extension Files {
                 right: rightPath,
                 recursive: recursive,
                 ignore: noIgnore ? Ignore() : nil,
-                matchPrecision: matchPrecision
+                matchPrecision: matchPrecision,
+                sizeTolerance: sizeTolerance
             )
 
             switch diffResult {
