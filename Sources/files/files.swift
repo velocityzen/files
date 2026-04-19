@@ -15,7 +15,7 @@ struct Files: AsyncParsableCommand {
             - Conflict resolution strategies
             - Dry-run mode for previewing changes
             """,
-        version: "1.5.1",
+        version: "1.6.0",
         subcommands: [
             CompareCommand.self,
             CompareSnapshotCommand.self,
