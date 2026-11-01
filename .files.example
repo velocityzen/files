@@ -1,7 +1,10 @@
 # .files configuration example
 # Place this file as .files in either the left or right directory.
 # Right directory values override left directory values.
-# CLI flags override all .files settings.
+# CLI flags override all .files settings (use --no-<flag> to turn one off).
+# For sync and cp, deletions, twoWay, conflictResolution and noIgnore are
+# read only from the destination .files; in the source .files they are
+# ignored with a warning.
 # Use --no-config to disable .files loading.
 
 # Fuzzy filename matching threshold (0.0 to 1.0)

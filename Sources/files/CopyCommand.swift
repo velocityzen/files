@@ -26,18 +26,22 @@ extension Files {
         var destinationPath: String
 
         @Flag(
-            name: .long,
+            name: .long, inversion: .prefixedNo,
             help: "Scan leaf directories on the right side for additional diff information")
-        var showMoreRight: Bool = false
+        var showMoreRight: Bool?
 
-        @Flag(name: .long, help: "Preview changes without applying them")
-        var dryRun: Bool = false
+        @Flag(
+            name: .long, inversion: .prefixedNo,
+            help: "Preview changes without applying them")
+        var dryRun: Bool?
 
-        @Flag(name: [.short, .long], help: "Show detailed output with all operations")
-        var verbose: Bool = false
+        @Flag(
+            name: [.short, .long], inversion: .prefixedNo,
+            help: "Show detailed output with all operations")
+        var verbose: Bool?
 
         @Option(name: .long, help: "Output format: text (default), json, summary")
-        var format: OutputFormat = .text
+        var format: OutputFormat?
 
         @Option(
             name: .long,
@@ -53,26 +57,31 @@ extension Files {
         )
         var sizeTolerance: Double?
 
-        @Flag(name: .long, help: "Disable .filesignore pattern matching")
-        var noIgnore: Bool = false
+        @Flag(
+            name: .customLong("ignore"), inversion: .prefixedNo,
+            help: "Apply .filesignore patterns (default: on)")
+        var useIgnore: Bool?
 
         @Flag(name: .long, help: "Disable .files configuration loading")
         var noConfig: Bool = false
 
         mutating func run() async throws {
+            // The source .files is not trusted with settings that delete or overwrite files
             let config =
                 noConfig
                 ? Config()
-                : await Config.load(leftPath: sourcePath, rightPath: destinationPath)
+                : await Config.load(
+                    leftPath: sourcePath, rightPath: destinationPath, trustLeft: false)
 
-            let showMoreRight = config.showMoreRight ?? showMoreRight
-            let dryRun = config.dryRun ?? dryRun
-            let verbose = config.verbose ?? verbose
+            // CLI flags take precedence over .files, then built-in defaults
+            let showMoreRight = showMoreRight ?? config.showMoreRight ?? false
+            let dryRun = dryRun ?? config.dryRun ?? false
+            let verbose = verbose ?? config.verbose ?? false
             let format =
-                config.format.flatMap { OutputFormat(rawValue: $0) } ?? format
+                format ?? config.format.flatMap { OutputFormat(rawValue: $0) } ?? .text
             let matchPrecision = matchPrecision ?? config.matchPrecision ?? 1.0
             let sizeTolerance = sizeTolerance ?? config.sizeTolerance ?? 0.0
-            let noIgnore = config.noIgnore ?? noIgnore
+            let noIgnore = useIgnore.map { !$0 } ?? config.noIgnore ?? false
 
             let ignore =
                 noIgnore

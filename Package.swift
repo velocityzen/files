@@ -38,7 +38,11 @@ let package = Package(
         ),
         .testTarget(
             name: "FilesTests",
-            dependencies: ["FilesKit"],
+            dependencies: [
+                "FilesKit",
+                "files",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]

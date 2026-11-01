@@ -30,36 +30,44 @@ extension Files {
         @Argument(help: "The destination directory")
         var destinationPath: String
 
-        @Flag(name: .long, help: "Enable two-way sync (bidirectional)")
-        var twoWay: Bool = false
+        @Flag(
+            name: .long, inversion: .prefixedNo,
+            help: "Enable two-way sync (bidirectional)")
+        var twoWay: Bool?
 
         @Option(
             name: .long, help: "Conflict resolution: newest (default), source, destination, skip")
         var conflictResolution: ConflictResolutionOption?
 
-        @Flag(name: .long, inversion: .prefixedNo, help: "Scan subdirectories recursively")
-        var recursive: Bool = true
+        @Flag(
+            name: .long, inversion: .prefixedNo,
+            help: "Scan subdirectories recursively (default: on)")
+        var recursive: Bool?
 
         @Flag(
-            name: .long,
+            name: .long, inversion: .prefixedNo,
             help: "Delete files in destination that don't exist in source (one-way sync only)")
-        var deletions: Bool = false
+        var deletions: Bool?
 
         @Flag(
-            name: .long,
+            name: .long, inversion: .prefixedNo,
             help:
                 "Scan leaf directories on the right side for additional diff information (one-way sync without deletions only)"
         )
-        var showMoreRight: Bool = false
+        var showMoreRight: Bool?
 
-        @Flag(name: .long, help: "Preview changes without applying them")
-        var dryRun: Bool = false
+        @Flag(
+            name: .long, inversion: .prefixedNo,
+            help: "Preview changes without applying them")
+        var dryRun: Bool?
 
-        @Flag(name: [.short, .long], help: "Show detailed output with all operations")
-        var verbose: Bool = false
+        @Flag(
+            name: [.short, .long], inversion: .prefixedNo,
+            help: "Show detailed output with all operations")
+        var verbose: Bool?
 
         @Option(name: .long, help: "Output format: text (default), json")
-        var format: OutputFormat = .text
+        var format: OutputFormat?
 
         @Option(
             name: .long,
@@ -75,33 +83,38 @@ extension Files {
         )
         var sizeTolerance: Double?
 
-        @Flag(name: .long, help: "Disable .filesignore pattern matching")
-        var noIgnore: Bool = false
+        @Flag(
+            name: .customLong("ignore"), inversion: .prefixedNo,
+            help: "Apply .filesignore patterns (default: on)")
+        var useIgnore: Bool?
 
         @Flag(name: .long, help: "Disable .files configuration loading")
         var noConfig: Bool = false
 
         mutating func run() async throws {
+            // The source .files is not trusted with settings that delete or overwrite files
             let config =
                 noConfig
                 ? Config()
-                : await Config.load(leftPath: sourcePath, rightPath: destinationPath)
+                : await Config.load(
+                    leftPath: sourcePath, rightPath: destinationPath, trustLeft: false)
 
-            let twoWay = config.twoWay ?? twoWay
+            // CLI flags take precedence over .files, then built-in defaults
+            let twoWay = twoWay ?? config.twoWay ?? false
             let conflictResolution =
                 conflictResolution
                 ?? config.conflictResolution.flatMap { ConflictResolutionOption(rawValue: $0) }
                 ?? .newest
-            let recursive = config.recursive ?? recursive
-            let deletions = config.deletions ?? deletions
-            let showMoreRight = config.showMoreRight ?? showMoreRight
-            let dryRun = config.dryRun ?? dryRun
-            let verbose = config.verbose ?? verbose
+            let recursive = recursive ?? config.recursive ?? true
+            let deletions = deletions ?? config.deletions ?? false
+            let showMoreRight = showMoreRight ?? config.showMoreRight ?? false
+            let dryRun = dryRun ?? config.dryRun ?? false
+            let verbose = verbose ?? config.verbose ?? false
             let format =
-                config.format.flatMap { OutputFormat(rawValue: $0) } ?? format
+                format ?? config.format.flatMap { OutputFormat(rawValue: $0) } ?? .text
             let matchPrecision = matchPrecision ?? config.matchPrecision ?? 1.0
             let sizeTolerance = sizeTolerance ?? config.sizeTolerance ?? 0.0
-            let noIgnore = config.noIgnore ?? noIgnore
+            let noIgnore = useIgnore.map { !$0 } ?? config.noIgnore ?? false
 
             let ignore =
                 noIgnore

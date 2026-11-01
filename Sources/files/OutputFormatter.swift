@@ -24,6 +24,13 @@ enum OutputFormatter {
             hasOutput = true
         }
 
+        for (file, setting) in config.ignoredSettings {
+            FileHandle.standardError.write(
+                Data(
+                    "Warning: ignoring '\(setting)' from source config \(file); settings that delete or overwrite files are only read from the destination .files or CLI flags\n"
+                        .utf8))
+        }
+
         if verbose && ignore.hasLoadedFiles {
             for file in ignore.loadedFiles {
                 print("Using ignore: \(file)")

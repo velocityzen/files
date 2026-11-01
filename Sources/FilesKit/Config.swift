@@ -20,6 +20,9 @@ public struct Config: Sendable, CustomStringConvertible {
     /// Whether any configuration was loaded from files
     public var hasLoadedFiles: Bool { !loadedFiles.isEmpty }
 
+    /// Settings dropped from an untrusted left .files, as "key = value"
+    public var ignoredSettings: [(file: String, setting: String)] = []
+
     public var description: String {
         var lines: [String] = []
         if let v = matchPrecision { lines.append("  matchPrecision = \(v)") }
@@ -41,7 +44,14 @@ public struct Config: Sendable, CustomStringConvertible {
 
     /// Loads config from .files in both left and right directories
     /// Right directory values override left directory values
-    public static func load(leftPath: String, rightPath: String) async -> Config {
+    /// - Parameter trustLeft: When false, settings that can delete or overwrite files
+    ///   (deletions, twoWay, conflictResolution, noIgnore) are dropped from the left .files
+    ///   and reported in `ignoredSettings`. Pass false when left is a sync source.
+    public static func load(
+        leftPath: String,
+        rightPath: String,
+        trustLeft: Bool = true
+    ) async -> Config {
         let filePaths = [
             URL(fileURLWithPath: leftPath)
                 .appendingPathComponent(".files")
@@ -68,14 +78,41 @@ public struct Config: Sendable, CustomStringConvertible {
 
         let sortedConfigs = configs.sorted { $0.0 < $1.0 }
         var merged = Config()
-        for (_, path, config) in sortedConfigs {
-            if let config {
+        for (index, path, config) in sortedConfigs {
+            if var config {
+                if index == 0 && !trustLeft {
+                    for setting in config.removeDestructiveSettings() {
+                        merged.ignoredSettings.append((file: path, setting: setting))
+                    }
+                }
                 merged = merged.merged(with: config)
                 merged.loadedFiles.append(path)
             }
         }
 
         return merged
+    }
+
+    /// Clears settings that can delete or overwrite files and returns them as "key = value"
+    private mutating func removeDestructiveSettings() -> [String] {
+        var removed: [String] = []
+        if let v = deletions {
+            removed.append("deletions = \(v)")
+            deletions = nil
+        }
+        if let v = twoWay {
+            removed.append("twoWay = \(v)")
+            twoWay = nil
+        }
+        if let v = conflictResolution {
+            removed.append("conflictResolution = \(v)")
+            conflictResolution = nil
+        }
+        if let v = noIgnore {
+            removed.append("noIgnore = \(v)")
+            noIgnore = nil
+        }
+        return removed
     }
 
     /// Merges this config with another, where the other's non-nil values take precedence

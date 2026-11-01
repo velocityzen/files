@@ -25,14 +25,18 @@ extension Files {
         @Argument(help: "The right directory to compare")
         var rightPath: String
 
-        @Flag(name: .long, inversion: .prefixedNo, help: "Scan subdirectories recursively")
-        var recursive: Bool = true
+        @Flag(
+            name: .long, inversion: .prefixedNo,
+            help: "Scan subdirectories recursively (default: on)")
+        var recursive: Bool?
 
-        @Flag(name: [.short, .long], help: "Show detailed output with all file paths")
-        var verbose: Bool = false
+        @Flag(
+            name: [.short, .long], inversion: .prefixedNo,
+            help: "Show detailed output with all file paths")
+        var verbose: Bool?
 
         @Option(name: .long, help: "Output format: text (default), json, summary")
-        var format: OutputFormat = .text
+        var format: OutputFormat?
 
         @Option(
             name: .long,
@@ -48,8 +52,10 @@ extension Files {
         )
         var sizeTolerance: Double?
 
-        @Flag(name: .long, help: "Disable .filesignore pattern matching")
-        var noIgnore: Bool = false
+        @Flag(
+            name: .customLong("ignore"), inversion: .prefixedNo,
+            help: "Apply .filesignore patterns (default: on)")
+        var useIgnore: Bool?
 
         @Flag(name: .long, help: "Disable .files configuration loading")
         var noConfig: Bool = false
@@ -60,13 +66,14 @@ extension Files {
                 ? Config()
                 : await Config.load(leftPath: leftPath, rightPath: rightPath)
 
-            let recursive = config.recursive ?? recursive
-            let verbose = config.verbose ?? verbose
+            // CLI flags take precedence over .files, then built-in defaults
+            let recursive = recursive ?? config.recursive ?? true
+            let verbose = verbose ?? config.verbose ?? false
             let format =
-                config.format.flatMap { OutputFormat(rawValue: $0) } ?? format
+                format ?? config.format.flatMap { OutputFormat(rawValue: $0) } ?? .text
             let matchPrecision = matchPrecision ?? config.matchPrecision ?? 1.0
             let sizeTolerance = sizeTolerance ?? config.sizeTolerance ?? 0.0
-            let noIgnore = config.noIgnore ?? noIgnore
+            let noIgnore = useIgnore.map { !$0 } ?? config.noIgnore ?? false
 
             let ignore =
                 noIgnore

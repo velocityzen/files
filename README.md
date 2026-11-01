@@ -121,7 +121,18 @@ The tool looks for `.files` in two locations:
 1. **Source/left directory**: `<source-dir>/.files`
 2. **Destination/right directory**: `<dest-dir>/.files`
 
-Right directory values override left directory values. CLI flags override all `.files` settings.
+Right directory values override left directory values. CLI flags override all `.files` settings: every on/off flag has a `--no-` form (for example `--no-dry-run`, `--no-deletions`, `--no-verbose`, and `--ignore` to undo `noIgnore`), so you can switch off a value a `.files` turned on.
+
+### Settings Read Only from the Destination
+
+For `sync` and `cp`, the settings that can delete or overwrite files are read only from the destination `.files` or from CLI flags:
+
+- `deletions`
+- `twoWay`
+- `conflictResolution`
+- `noIgnore`
+
+If the source `.files` contains any of them, they are ignored and a warning naming the file is printed to stderr. This keeps a `.files` inside a folder you sync *from* (a download, a USB drive, a shared folder) from deleting or overwriting files in your destination. `compare` changes no files, so it reads every setting from both directories.
 
 ### Format
 
@@ -243,10 +254,10 @@ files sync <source-directory> <destination-directory> [options]
 
 #### Options
 
-- `--two-way` - Enable bidirectional sync (default: one-way)
+- `--two-way` / `--no-two-way` - Enable bidirectional sync (default: one-way)
 - `--conflict-resolution STRATEGY` - For two-way sync: `newest` (default), `source`, `destination`, `skip`
 - `--recursive` / `--no-recursive` - Scan subdirectories recursively (default: recursive)
-- `--deletions` - Delete files in destination that don't exist in source (one-way sync only, default: false)
+- `--deletions` / `--no-deletions` - Delete files in destination that don't exist in source (one-way sync only, default: false)
 - `--show-more-right` - Scan leaf directories on the right side for additional diff information (one-way sync without deletions only)
 - `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching). Lower values enable matching files with similar names using Levenshtein distance
 - `--size-tolerance TOLERANCE` - File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)
