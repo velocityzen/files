@@ -9,14 +9,23 @@ public struct DirectoryDifference: Sendable, Codable {
     /// Files that exist in both but have different content
     public let modified: Set<String>
 
+    /// Fuzzy-matched pairs: left relative path (as listed in `common` or `modified`)
+    /// to the right relative path it was matched with
+    public let matches: [String: String]
+
     /// Returns true if there are any differences between the directories
     public var hasDifferences: Bool {
         !onlyInLeft.isEmpty || !onlyInRight.isEmpty || !modified.isEmpty
     }
 
+    /// Right relative path for a left file in `common` or `modified`
+    public func rightPath(for leftPath: String) -> String {
+        matches[leftPath] ?? leftPath
+    }
+
     // Custom coding keys to maintain JSON compatibility
     private enum CodingKeys: String, CodingKey {
-        case onlyInLeft, onlyInRight, common, modified, summary
+        case onlyInLeft, onlyInRight, common, modified, matches, summary
     }
 
     // Helper struct for JSON encoding/decoding summary
@@ -42,6 +51,10 @@ public struct DirectoryDifference: Sendable, Codable {
         self.common = Set(commonArray)
         self.modified = Set(modifiedArray)
 
+        // Snapshots written before fuzzy pairs were recorded have no matches
+        self.matches =
+            try container.decodeIfPresent([String: String].self, forKey: .matches) ?? [:]
+
         // Summary is optional and we don't need to store it
         _ = try? container.decodeIfPresent(Summary.self, forKey: .summary)
     }
@@ -54,6 +67,7 @@ public struct DirectoryDifference: Sendable, Codable {
         try container.encode(Array(onlyInRight).sorted(), forKey: .onlyInRight)
         try container.encode(Array(common).sorted(), forKey: .common)
         try container.encode(Array(modified).sorted(), forKey: .modified)
+        try container.encode(matches, forKey: .matches)
 
         // Add summary for better readability
         let summary = Summary(
@@ -68,12 +82,13 @@ public struct DirectoryDifference: Sendable, Codable {
 
     public init(
         onlyInLeft: Set<String>, onlyInRight: Set<String>, common: Set<String>,
-        modified: Set<String>
+        modified: Set<String>, matches: [String: String] = [:]
     ) {
         self.onlyInLeft = onlyInLeft
         self.onlyInRight = onlyInRight
         self.common = common
         self.modified = modified
+        self.matches = matches
     }
 }
 
@@ -154,6 +169,8 @@ public func directoryDifference(
                         leftPath: leftPath,
                         rightPath: rightPath,
                         filesLeft: filesLeft,
+                        recursive: recursive,
+                        ignore: patterns,
                         matchPrecision: matchPrecision,
                         sizeTolerance: sizeTolerance
                     )
@@ -272,18 +289,38 @@ private func fuzzyComparison(
         threshold: matchPrecision
     )
 
-    var common = exactCommon
-    var modified = Set<String>()
-    var onlyInLeft = unmatchedLeft
-    var onlyInRight = unmatchedRight
-
     let exactModified = try await findModifiedFiles(
         common: exactCommon,
         leftPath: leftPath,
         rightPath: rightPath
     )
-    modified.formUnion(exactModified)
-    common.subtract(exactModified)
+    let fuzzy = try await classifyFuzzyMatches(
+        fuzzyMatches,
+        leftPath: leftPath,
+        rightPath: rightPath,
+        sizeTolerance: sizeTolerance
+    )
+
+    return DirectoryDifference(
+        onlyInLeft: unmatchedLeft.subtracting(fuzzyMatches.keys),
+        onlyInRight: unmatchedRight.subtracting(fuzzyMatches.values),
+        common: exactCommon.subtracting(exactModified).union(fuzzy.common),
+        modified: exactModified.union(fuzzy.modified),
+        matches: fuzzyMatches
+    )
+}
+
+/// Compares the content of fuzzy-matched pairs
+/// - Returns: Left paths of pairs treated as the same file, and of pairs that differ
+@concurrent
+private func classifyFuzzyMatches(
+    _ fuzzyMatches: [String: String],
+    leftPath: String,
+    rightPath: String,
+    sizeTolerance: Double
+) async throws -> (common: Set<String>, modified: Set<String>) {
+    var common = Set<String>()
+    var modified = Set<String>()
 
     for (leftFile, rightFile) in fuzzyMatches {
         let leftFullPath = URL(fileURLWithPath: leftPath)
@@ -306,17 +343,9 @@ private func fuzzyComparison(
         } else {
             common.insert(leftFile)
         }
-
-        onlyInLeft.remove(leftFile)
-        onlyInRight.remove(rightFile)
     }
 
-    return DirectoryDifference(
-        onlyInLeft: onlyInLeft,
-        onlyInRight: onlyInRight,
-        common: common,
-        modified: modified
-    )
+    return (common, modified)
 }
 
 /// Optimized comparison mode: only checks if left files exist in right
@@ -325,6 +354,8 @@ private func optimizedComparison(
     leftPath: String,
     rightPath: String,
     filesLeft: Set<String>,
+    recursive: Bool,
+    ignore: Ignore,
     matchPrecision: Double,
     sizeTolerance: Double
 ) async throws -> DirectoryDifference {
@@ -346,65 +377,37 @@ private func optimizedComparison(
 
     // For fuzzy matching in optimized mode, we need to scan the right directory
     // because we don't know which files might be similar
-    let ignore = Ignore()
-    let filesRight = try await scanDirectory(at: rightPath, recursive: true, ignore: ignore)
+    let filesRight = try await scanDirectory(
+        at: rightPath, recursive: recursive, ignore: ignore)
 
     let exactCommon = filesLeft.intersection(filesRight)
     let unmatchedLeft = filesLeft.subtracting(filesRight)
     let unmatchedRight = filesRight.subtracting(filesLeft)
 
-    // Find fuzzy matches
     let fuzzyMatches = findFuzzyMatches(
         leftFiles: unmatchedLeft,
         rightFiles: unmatchedRight,
         threshold: matchPrecision
     )
 
-    // Build sets for the result
-    var common = Set<String>()
-    var modified = Set<String>()
-    var onlyInLeft = unmatchedLeft
-
-    // Check exact matches
     let exactModified = try await findModifiedFiles(
         common: exactCommon,
         leftPath: leftPath,
         rightPath: rightPath
     )
-    common.formUnion(exactCommon.subtracting(exactModified))
-    modified.formUnion(exactModified)
-
-    // Process fuzzy matches
-    for (leftFile, rightFile) in fuzzyMatches {
-        let leftFullPath = URL(fileURLWithPath: leftPath)
-            .appendingPathComponent(leftFile)
-            .path(percentEncoded: false)
-        let rightFullPath = URL(fileURLWithPath: rightPath)
-            .appendingPathComponent(rightFile)
-            .path(percentEncoded: false)
-
-        let isDifferent =
-            if sizeTolerance > 0 {
-                try await !filesAreSimilarSize(
-                    leftFullPath, rightFullPath, tolerance: sizeTolerance)
-            } else {
-                try await filesAreDifferent(leftFullPath, rightFullPath)
-            }
-
-        if isDifferent {
-            modified.insert(leftFile)
-        } else {
-            common.insert(leftFile)
-        }
-
-        onlyInLeft.remove(leftFile)
-    }
+    let fuzzy = try await classifyFuzzyMatches(
+        fuzzyMatches,
+        leftPath: leftPath,
+        rightPath: rightPath,
+        sizeTolerance: sizeTolerance
+    )
 
     return DirectoryDifference(
-        onlyInLeft: onlyInLeft,
+        onlyInLeft: unmatchedLeft.subtracting(fuzzyMatches.keys),
         onlyInRight: [],
-        common: common,
-        modified: modified
+        common: exactCommon.subtracting(exactModified).union(fuzzy.common),
+        modified: exactModified.union(fuzzy.modified),
+        matches: fuzzyMatches
     )
 }
 
@@ -459,60 +462,30 @@ private func leafFoldersComparison(
     let unmatchedLeft = filesLeft.subtracting(filesInRightLeaves)
     let unmatchedRight = filesInRightLeaves.subtracting(filesLeft)
 
-    // Find fuzzy matches
     let fuzzyMatches = findFuzzyMatches(
         leftFiles: unmatchedLeft,
         rightFiles: unmatchedRight,
         threshold: matchPrecision
     )
 
-    // Build sets for the result
-    var common = Set<String>()
-    var modified = Set<String>()
-    var onlyInLeft = unmatchedLeft
-    var onlyInRight = unmatchedRight
-
-    // Check exact matches
     let exactModified = try await findModifiedFiles(
         common: exactCommon,
         leftPath: leftPath,
         rightPath: rightPath
     )
-    common.formUnion(exactCommon.subtracting(exactModified))
-    modified.formUnion(exactModified)
-
-    // Process fuzzy matches
-    for (leftFile, rightFile) in fuzzyMatches {
-        let leftFullPath = URL(fileURLWithPath: leftPath)
-            .appendingPathComponent(leftFile)
-            .path(percentEncoded: false)
-        let rightFullPath = URL(fileURLWithPath: rightPath)
-            .appendingPathComponent(rightFile)
-            .path(percentEncoded: false)
-
-        let isDifferent =
-            if sizeTolerance > 0 {
-                try await !filesAreSimilarSize(
-                    leftFullPath, rightFullPath, tolerance: sizeTolerance)
-            } else {
-                try await filesAreDifferent(leftFullPath, rightFullPath)
-            }
-
-        if isDifferent {
-            modified.insert(leftFile)
-        } else {
-            common.insert(leftFile)
-        }
-
-        onlyInLeft.remove(leftFile)
-        onlyInRight.remove(rightFile)
-    }
+    let fuzzy = try await classifyFuzzyMatches(
+        fuzzyMatches,
+        leftPath: leftPath,
+        rightPath: rightPath,
+        sizeTolerance: sizeTolerance
+    )
 
     return DirectoryDifference(
-        onlyInLeft: onlyInLeft,
-        onlyInRight: onlyInRight,
-        common: common,
-        modified: modified
+        onlyInLeft: unmatchedLeft.subtracting(fuzzyMatches.keys),
+        onlyInRight: unmatchedRight.subtracting(fuzzyMatches.values),
+        common: exactCommon.subtracting(exactModified).union(fuzzy.common),
+        modified: exactModified.union(fuzzy.modified),
+        matches: fuzzyMatches
     )
 }
 
@@ -609,15 +582,9 @@ private func scanLeafDirectories(
     try await Task.detached {
         let fileManager = FileManager.default
         let baseURL = URL(fileURLWithPath: path)
+        let basePath = standardizedPath(of: baseURL)
 
         var files = Set<String>()
-
-        // Standardize base path
-        let standardizedBase = baseURL.standardizedFileURL
-        var standardizedBasePath = standardizedBase.path(percentEncoded: false)
-        if standardizedBasePath.hasSuffix("/") {
-            standardizedBasePath = String(standardizedBasePath.dropLast())
-        }
 
         // Scan each leaf directory
         for leafDir in leafDirs {
@@ -633,29 +600,15 @@ private func scanLeafDirectories(
                 continue
             }
 
-            for case let fileURL as URL in enumerator.allObjects {
+            while let fileURL = enumerator.nextObject() as? URL {
                 let resourceValues = try fileURL.resourceValues(forKeys: [.isDirectoryKey])
-                let isDirectory = resourceValues.isDirectory == true
+                if resourceValues.isDirectory == true {
+                    continue
+                }
 
-                if !isDirectory {
-                    let standardizedFile = fileURL.standardizedFileURL
-                    var filePath = standardizedFile.path(percentEncoded: false)
-
-                    if filePath.hasSuffix("/") {
-                        filePath = String(filePath.dropLast())
-                    }
-
-                    // Get relative path from base
-                    let relativePath: String
-                    if filePath.hasPrefix(standardizedBasePath + "/") {
-                        relativePath = String(filePath.dropFirst(standardizedBasePath.count + 1))
-                    } else {
-                        relativePath = fileURL.lastPathComponent
-                    }
-
-                    if !ignore.shouldIgnore(relativePath, isDirectory: false) {
-                        files.insert(relativePath)
-                    }
+                let relativePath = relativeFilePath(of: fileURL, basePath: basePath)
+                if !ignore.shouldIgnore(relativePath, isDirectory: false) {
+                    files.insert(relativePath)
                 }
             }
         }
@@ -684,46 +637,44 @@ private func scanDirectory(at path: String, recursive: Bool, ignore: Ignore)
             throw DirectoryDifferenceError.accessDenied(path)
         }
 
+        let basePath = standardizedPath(of: baseURL)
         var files = Set<String>()
-        let allObjects = enumerator.allObjects
 
-        // Standardize URLs to resolve symlinks and remove trailing slash
-        let standardizedBase = baseURL.standardizedFileURL
-        var standardizedBasePath = standardizedBase.path(percentEncoded: false)
-        if standardizedBasePath.hasSuffix("/") {
-            standardizedBasePath = String(standardizedBasePath.dropLast())
-        }
-
-        for case let fileURL as URL in allObjects {
+        while let fileURL = enumerator.nextObject() as? URL {
             let resourceValues = try fileURL.resourceValues(forKeys: [.isDirectoryKey])
-            let isDirectory = resourceValues.isDirectory == true
+            let relativePath = relativeFilePath(of: fileURL, basePath: basePath)
 
-            if !isDirectory {
-                let standardizedFile = fileURL.standardizedFileURL
-                var filePath = standardizedFile.path(percentEncoded: false)
-
-                // Remove trailing slash if present
-                if filePath.hasSuffix("/") {
-                    filePath = String(filePath.dropLast())
+            if resourceValues.isDirectory == true {
+                // Like .gitignore, an ignored directory hides everything inside it,
+                // so there is no need to walk it
+                if ignore.shouldIgnore(relativePath, isDirectory: true) {
+                    enumerator.skipDescendants()
                 }
-
-                // Remove base path to get relative path
-                let relativePath: String
-                if filePath.hasPrefix(standardizedBasePath + "/") {
-                    relativePath = String(filePath.dropFirst(standardizedBasePath.count + 1))
-                } else {
-                    relativePath = fileURL.lastPathComponent
-                }
-
-                // Check if file should be ignored
-                if !ignore.shouldIgnore(relativePath, isDirectory: false) {
-                    files.insert(relativePath)
-                }
+            } else if !ignore.shouldIgnore(relativePath, isDirectory: false) {
+                files.insert(relativePath)
             }
         }
 
         return files
     }.value
+}
+
+/// Standardized path of a URL without a trailing slash
+private func standardizedPath(of url: URL) -> String {
+    var path = url.standardizedFileURL.path(percentEncoded: false)
+    if path.hasSuffix("/") {
+        path = String(path.dropLast())
+    }
+    return path
+}
+
+/// Path of an enumerated URL relative to the standardized base path
+private func relativeFilePath(of url: URL, basePath: String) -> String {
+    let path = standardizedPath(of: url)
+    if path.hasPrefix(basePath + "/") {
+        return String(path.dropFirst(basePath.count + 1))
+    }
+    return url.lastPathComponent
 }
 
 /// Finds files that exist in both directories but have different content
@@ -936,46 +887,55 @@ private func getFileStatus(in diff: DirectoryDifference, file: String) -> String
 ///   - rightFiles: Files from the right directory
 ///   - threshold: Minimum similarity threshold (0.0 to 1.0)
 /// - Returns: A dictionary mapping left files to their best matching right files
+///
+/// Every pair above the threshold is scored first, then pairs are assigned best-first,
+/// so the result never depends on Set iteration order. Ties prefer files in the same
+/// directory, then the alphabetically first paths.
 internal func findFuzzyMatches(
     leftFiles: Set<String>,
     rightFiles: Set<String>,
     threshold: Double
 ) -> [String: String] {
-    var matches: [String: String] = [:]
-    var usedRightFiles = Set<String>()
+    let left = leftFiles.sorted().map(splitPath)
+    let right = rightFiles.sorted().map(splitPath)
 
-    // For each left file, find the best matching right file
-    for leftFile in leftFiles {
-        let leftName = URL(fileURLWithPath: leftFile).lastPathComponent
-        var bestMatch: (rightFile: String, similarity: Double)?
-
-        for rightFile in rightFiles {
-            // Skip already matched files
-            if usedRightFiles.contains(rightFile) {
-                continue
-            }
-
-            let rightName = URL(fileURLWithPath: rightFile).lastPathComponent
-            let similarity = stringSimilarity(leftName, rightName)
-
-            // Update best match if this is better and meets threshold
+    var candidates: [(left: Int, right: Int, similarity: Double, sameDirectory: Bool)] = []
+    for (leftIndex, leftFile) in left.enumerated() {
+        for (rightIndex, rightFile) in right.enumerated() {
+            let similarity = stringSimilarity(leftFile.name, rightFile.name)
             if similarity >= threshold {
-                if let current = bestMatch {
-                    if similarity > current.similarity {
-                        bestMatch = (rightFile, similarity)
-                    }
-                } else {
-                    bestMatch = (rightFile, similarity)
-                }
+                candidates.append(
+                    (
+                        leftIndex, rightIndex, similarity,
+                        leftFile.directory == rightFile.directory
+                    ))
             }
-        }
-
-        // Record the match if found
-        if let match = bestMatch {
-            matches[leftFile] = match.rightFile
-            usedRightFiles.insert(match.rightFile)
         }
     }
 
+    // Indices follow sorted paths, so comparing them orders pairs by path
+    candidates.sort { a, b in
+        if a.similarity != b.similarity { return a.similarity > b.similarity }
+        if a.sameDirectory != b.sameDirectory { return a.sameDirectory }
+        if a.left != b.left { return a.left < b.left }
+        return a.right < b.right
+    }
+
+    var matches: [String: String] = [:]
+    var usedRight = Set<Int>()
+    for candidate in candidates
+    where matches[left[candidate.left].path] == nil && !usedRight.contains(candidate.right) {
+        matches[left[candidate.left].path] = right[candidate.right].path
+        usedRight.insert(candidate.right)
+    }
+
     return matches
+}
+
+/// Splits a relative path into its directory and file name
+private func splitPath(_ path: String) -> (path: String, directory: Substring, name: String) {
+    guard let slash = path.lastIndex(of: "/") else {
+        return (path, "", path)
+    }
+    return (path, path[..<slash], String(path[path.index(after: slash)...]))
 }

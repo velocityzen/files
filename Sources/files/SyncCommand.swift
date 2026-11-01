@@ -124,7 +124,7 @@ extension Files {
             OutputFormatter.printConfig(config, ignore: ignore, verbose: verbose)
 
             if dryRun {
-                print("🔍 DRY RUN - No changes will be made\n")
+                OutputFormatter.printDiagnostic("🔍 DRY RUN - No changes will be made\n")
             }
 
             let syncMode: SyncMode =
@@ -168,7 +168,7 @@ extension Files {
                 dryRun: dryRun
             )
 
-            if !dryRun && results.failed > 0 {
+            if results.failed > 0 {
                 throw ExitCode(1)
             }
         }

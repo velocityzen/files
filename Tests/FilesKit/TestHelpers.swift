@@ -106,4 +106,52 @@ enum TestHelpers {
         let rightFile = try createJSONFile(diff: right)
         return (leftFile, rightFile)
     }
+
+    /// Collects every result from a sync stream
+    static func collect(_ stream: AsyncStream<OperationResult>) async -> [OperationResult] {
+        var results: [OperationResult] = []
+        for await result in stream {
+            results.append(result)
+        }
+        return results
+    }
+
+    /// Files in a directory whose name marks them as an unfinished copy
+    static func leftoverTempFiles(in url: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: url.path(percentEncoded: false))
+            .filter { $0.hasSuffix(".files-tmp") }
+    }
+
+    /// The built `files` executable, which sits next to the test bundle
+    static var filesExecutable: URL {
+        // macOS loads tests from a .xctest bundle; Linux runs them as an executable
+        let bundleURL = Bundle(for: BundleToken.self).bundleURL
+        let productsURL =
+            bundleURL.pathExtension == "xctest" ? bundleURL.deletingLastPathComponent() : bundleURL
+        return productsURL.appendingPathComponent("files")
+    }
+
+    private final class BundleToken {}
+
+    /// Runs the `files` executable in `directory` and captures its output
+    static func runFiles(_ arguments: [String], in directory: URL) throws -> (
+        status: Int32, stdout: Data, stderr: String
+    ) {
+        let process = Process()
+        process.executableURL = filesExecutable
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        let output = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errors = stderr.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        return (process.terminationStatus, output, String(decoding: errors, as: UTF8.self))
+    }
 }

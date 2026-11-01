@@ -9,6 +9,13 @@ enum OutputFormat: String, ExpressibleByArgument {
 }
 
 enum OutputFormatter {
+    // MARK: - Diagnostics
+
+    /// Prints a status line to stderr so stdout carries only the results (e.g. JSON)
+    static func printDiagnostic(_ message: String) {
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
+    }
+
     // MARK: - Config Printing
 
     static func printConfig(_ config: Config, ignore: Ignore, verbose: Bool) {
@@ -16,30 +23,29 @@ enum OutputFormatter {
 
         if config.hasLoadedFiles {
             for file in config.loadedFiles {
-                print("Using config: \(file)")
+                printDiagnostic("Using config: \(file)")
             }
             if verbose {
-                print("Config settings:\n\(config)")
+                printDiagnostic("Config settings:\n\(config)")
             }
             hasOutput = true
         }
 
         for (file, setting) in config.ignoredSettings {
-            FileHandle.standardError.write(
-                Data(
-                    "Warning: ignoring '\(setting)' from source config \(file); settings that delete or overwrite files are only read from the destination .files or CLI flags\n"
-                        .utf8))
+            printDiagnostic(
+                "Warning: ignoring '\(setting)' from source config \(file); settings that delete or overwrite files are only read from the destination .files or CLI flags"
+            )
         }
 
         if verbose && ignore.hasLoadedFiles {
             for file in ignore.loadedFiles {
-                print("Using ignore: \(file)")
+                printDiagnostic("Using ignore: \(file)")
             }
             hasOutput = true
         }
 
         if hasOutput {
-            print("")
+            printDiagnostic("")
         }
     }
 
@@ -81,52 +87,63 @@ enum OutputFormatter {
     }
 
     private static func printTextFormat(results: [OperationResult], verbose: Bool, dryRun: Bool) {
-        if results.operations.isEmpty {
+        let operations = fileOperations(results)
+        let failedOperations = results.failedOperations
+
+        if operations.isEmpty && failedOperations.isEmpty {
             print("✓ No operations needed")
             return
         }
-        let (copies, updates, deletes, infos) = groupOperations(results.operations)
 
-        print()
-        let verb = dryRun ? "Would perform" : "Performed"
-        print("\(verb) \(results.operations.count) operation(s)")
-        print()
+        if !operations.isEmpty {
+            let (copies, updates, deletes, infos) = groupOperations(operations)
 
-        if !copies.isEmpty {
-            printOperationList("Copy", operations: copies, verbose: verbose)
             print()
-        }
-
-        if !updates.isEmpty {
-            printOperationList("Update", operations: updates, verbose: verbose)
+            let verb = dryRun ? "Would perform" : "Performed"
+            print("\(verb) \(operations.count) operation(s)")
             print()
-        }
 
-        if !deletes.isEmpty {
-            printOperationList("Delete", operations: deletes, verbose: verbose)
-            print()
-        }
+            if !copies.isEmpty {
+                printOperationList("Copy", operations: copies, verbose: verbose)
+                print()
+            }
 
-        if !infos.isEmpty {
-            printOperationList("Info", operations: infos, verbose: verbose)
-            print()
+            if !updates.isEmpty {
+                printOperationList("Update", operations: updates, verbose: verbose)
+                print()
+            }
+
+            if !deletes.isEmpty {
+                printOperationList("Delete", operations: deletes, verbose: verbose)
+                print()
+            }
+
+            if !infos.isEmpty {
+                printOperationList("Info", operations: infos, verbose: verbose)
+                print()
+            }
         }
 
         if !dryRun {
             print(
                 "Summary: \(results.succeeded) succeeded, \(results.failed) failed"
             )
+        }
 
-            // Print failed operations if any
-            if !results.failedOperations.isEmpty {
-                print()
-                print("❌ Failed Operations (\(results.failedOperations.count)):")
-                for (operation, error) in results.failedOperations {
-                    print("  ✗ \(operation.relativePath)")
-                    print("    Error: \(error)")
-                }
+        // In a dry run, failures are comparison or planning errors and must still show
+        if !failedOperations.isEmpty {
+            print()
+            print("❌ Failed Operations (\(failedOperations.count)):")
+            for (operation, error) in failedOperations {
+                print("  ✗ \(operation.relativePath)")
+                print("    Error: \(error)")
             }
         }
+    }
+
+    /// Operations that touch files, without `.compare` entries that only carry an error
+    private static func fileOperations(_ results: [OperationResult]) -> [FileOperation] {
+        results.operations.filter { $0.type != .compare }
     }
 
     static func printOperationList(
@@ -178,9 +195,10 @@ enum OutputFormatter {
     }
 
     private static func printSummaryFormat(results: [OperationResult], dryRun: Bool) {
-        let (copies, updates, deletes, infos) = groupOperations(results.operations)
+        let operations = fileOperations(results)
+        let (copies, updates, deletes, infos) = groupOperations(operations)
 
-        print("Total operations: \(results.operations.count)")
+        print("Total operations: \(operations.count)")
         print("Copy: \(copies.count)")
         print("Update: \(updates.count)")
         print("Delete: \(deletes.count)")
@@ -188,6 +206,8 @@ enum OutputFormatter {
 
         if !dryRun {
             print("Succeeded: \(results.succeeded)")
+            print("Failed: \(results.failed)")
+        } else if results.failed > 0 {
             print("Failed: \(results.failed)")
         }
     }
@@ -226,9 +246,13 @@ enum OutputFormatter {
         print()
         printFileList("Only in RIGHT", prefix: " +", files: diff.onlyInRight, verbose: verbose)
         print()
-        printFileList("Modified", prefix: " ^", files: diff.modified, verbose: verbose)
+        printFileList(
+            "Modified", prefix: " ^", files: diff.modified, matches: diff.matches,
+            verbose: verbose)
         print()
-        printFileList("Unchanged", prefix: " ~", files: diff.common, verbose: verbose)
+        printFileList(
+            "Unchanged", prefix: " ~", files: diff.common, matches: diff.matches,
+            verbose: verbose)
         print()
 
         print(
@@ -236,8 +260,10 @@ enum OutputFormatter {
         )
     }
 
-    static func printFileList(_ message: String, prefix: String, files: Set<String>, verbose: Bool)
-    {
+    static func printFileList(
+        _ message: String, prefix: String, files: Set<String>, matches: [String: String] = [:],
+        verbose: Bool
+    ) {
         if files.isEmpty {
             return
         }
@@ -245,7 +271,11 @@ enum OutputFormatter {
         print("\(message): (\(files.count)):")
         if verbose {
             for file in files.sorted() {
-                print("\(prefix) \(file)")
+                if let match = matches[file] {
+                    print("\(prefix) \(file) (matched with: \(match))")
+                } else {
+                    print("\(prefix) \(file)")
+                }
             }
         } else {
             print("  Use --verbose to see file list")
@@ -258,6 +288,7 @@ enum OutputFormatter {
             "onlyInRight": Array(diff.onlyInRight).sorted(),
             "modified": Array(diff.modified).sorted(),
             "common": Array(diff.common).sorted(),
+            "matches": diff.matches,
             "summary": [
                 "onlyInLeftCount": diff.onlyInLeft.count,
                 "onlyInRightCount": diff.onlyInRight.count,

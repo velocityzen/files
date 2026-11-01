@@ -312,7 +312,7 @@ private func planTwoWaySync(
     }
 
     let conflictResult = await resolveModifiedFiles(
-        modified: diff.modified,
+        diff: diff,
         leftPath: leftPath,
         rightPath: rightPath,
         conflictResolution: conflictResolution
@@ -330,20 +330,22 @@ private func planTwoWaySync(
 }
 
 /// Resolves conflicts for all modified files during two-way sync
+/// A fuzzy-matched pair is resolved between its two actual files, and the losing file
+/// is overwritten in place, so each side keeps its own name
 private func resolveModifiedFiles(
-    modified: Set<String>,
+    diff: DirectoryDifference,
     leftPath: String,
     rightPath: String,
     conflictResolution: ConflictResolution
 ) async -> Result<[FileOperation], DirectorySyncError> {
     var operations: [FileOperation] = []
 
-    for relativePath in modified {
+    for relativePath in diff.modified {
         let leftFile = URL(fileURLWithPath: leftPath)
             .appendingPathComponent(relativePath)
             .path(percentEncoded: false)
         let rightFile = URL(fileURLWithPath: rightPath)
-            .appendingPathComponent(relativePath)
+            .appendingPathComponent(diff.rightPath(for: relativePath))
             .path(percentEncoded: false)
 
         let result = await resolveConflict(
@@ -507,38 +509,65 @@ private func copyOperation(
         )
     }
 
+    // Copy next to the destination first, so a failed or interrupted copy
+    // never touches an existing file
+    let rightURL = URL(fileURLWithPath: operation.right)
+    let rightDir = rightURL.deletingLastPathComponent()
+    let tempURL = rightDir.appendingPathComponent(
+        ".\(rightURL.lastPathComponent).\(UUID().uuidString).files-tmp")
+    let tempPath = tempURL.path(percentEncoded: false)
+
     do {
         // Get file size
         let attrs = try FileManager.default.attributesOfItem(atPath: left)
         let fileSize = (attrs[.size] as? Int64) ?? 0
 
         // Create right directory if needed
-        let rightURL = URL(fileURLWithPath: operation.right)
-        let rightDir = rightURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: rightDir,
             withIntermediateDirectories: true,
             attributes: nil
         )
 
-        // Copy file (will overwrite if exists for update operations)
-        if FileManager.default.fileExists(atPath: operation.right) {
-            try FileManager.default.removeItem(atPath: operation.right)
-        }
-
         if fileSize < minSizeToChunk {
             // For small files, use simple copy
-            try FileManager.default.copyItem(atPath: left, toPath: operation.right)
-            continuation.success(operation: operation, bytesTransferred: fileSize)
+            try FileManager.default.copyItem(atPath: left, toPath: tempPath)
         } else {
-            copyFileWithProgress(
-                operation: operation,
-                expectedFileSize: fileSize,
-                continuation: continuation
+            try copyFileWithProgress(
+                from: left,
+                to: tempPath,
+                expectedFileSize: fileSize
+            ) { bytesCopied in
+                continuation.success(operation: operation, bytesTransferred: bytesCopied)
+            }
+
+            // A streamed copy has fresh metadata, so keep what copyItem would keep
+            try FileManager.default.setAttributes(
+                attrs.filter { $0.key == .posixPermissions || $0.key == .modificationDate },
+                ofItemAtPath: tempPath
             )
         }
+
+        try moveReplacingItem(at: tempURL, to: rightURL)
+        continuation.success(operation: operation, bytesTransferred: fileSize)
     } catch {
+        try? FileManager.default.removeItem(at: tempURL)
         return continuation.failure(operation: operation, error: error)
+    }
+}
+
+/// Moves a file into place, atomically replacing an existing file at the destination
+private func moveReplacingItem(at source: URL, to destination: URL) throws {
+    if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
+        // Keep the copied file's metadata instead of merging in the old file's
+        _ = try FileManager.default.replaceItemAt(
+            destination,
+            withItemAt: source,
+            backupItemName: nil,
+            options: [.usingNewMetadataOnly]
+        )
+    } else {
+        try FileManager.default.moveItem(at: source, to: destination)
     }
 }
 
@@ -554,32 +583,20 @@ private func deleteOperation(for operation: FileOperation) -> OperationResult {
     }
 }
 
-/// Copies a file with progress reporting via the stream continuation
+/// Copies a file in chunks, calling `onProgress` with the bytes copied so far at intervals
 internal func copyFileWithProgress(
-    operation: FileOperation,
+    from source: String,
+    to destination: String,
     expectedFileSize: Int64,
-    continuation: AsyncStream<OperationResult>.Continuation
-) {
+    onProgress: (Int64) -> Void
+) throws {
     let bufferSize = copyChunkSize
 
-    guard let left = operation.left else {
-        return continuation.failure(
-            operation: operation,
-            error: DirectorySyncError.operationFailed("No source path for copy operation")
-        )
+    guard let inputStream = InputStream(fileAtPath: source) else {
+        throw DirectorySyncError.operationFailed("Failed to open source file")
     }
-
-    guard let inputStream = InputStream(fileAtPath: left) else {
-        return continuation.failure(
-            operation: operation,
-            error: DirectorySyncError.operationFailed("Failed to open source file")
-        )
-    }
-    guard let outputStream = OutputStream(toFileAtPath: operation.right, append: false) else {
-        return continuation.failure(
-            operation: operation,
-            error: DirectorySyncError.operationFailed("Failed to create destination file")
-        )
+    guard let outputStream = OutputStream(toFileAtPath: destination, append: false) else {
+        throw DirectorySyncError.operationFailed("Failed to create destination file")
     }
 
     inputStream.open()
@@ -598,10 +615,8 @@ internal func copyFileWithProgress(
         let bytesRead = inputStream.read(&buffer, maxLength: bufferSize)
 
         if bytesRead < 0 {
-            return continuation.failure(
-                operation: operation,
-                error: DirectorySyncError.operationFailed("Failed to read from source file")
-            )
+            throw inputStream.streamError
+                ?? DirectorySyncError.operationFailed("Failed to read from source file")
         }
 
         if bytesRead == 0 {
@@ -610,31 +625,21 @@ internal func copyFileWithProgress(
 
         let bytesWritten = outputStream.write(buffer, maxLength: bytesRead)
         if bytesWritten != bytesRead {
-            return continuation.failure(
-                operation: operation,
-                error: DirectorySyncError.operationFailed("Failed to write to destination file")
-            )
+            throw outputStream.streamError
+                ?? DirectorySyncError.operationFailed("Failed to write to destination file")
         }
 
         totalBytesRead += Int64(bytesRead)
 
-        // Yield progress update only at intervals
+        // Report progress only at intervals; the caller reports the final total
         if totalBytesRead - lastReportedBytes >= minSizeToChunk {
-            continuation.success(operation: operation, bytesTransferred: totalBytesRead)
+            onProgress(totalBytesRead)
             lastReportedBytes = totalBytesRead
         }
     }
 
-    // Final progress update with exact total
-    if totalBytesRead != lastReportedBytes {
-        continuation.success(operation: operation, bytesTransferred: totalBytesRead)
-    }
-
     if totalBytesRead != expectedFileSize {
-        return continuation.failure(
-            operation: operation,
-            error: DirectorySyncError.operationFailed(
-                "Transferred \(totalBytesRead) bytes, expected \(expectedFileSize)")
-        )
+        throw DirectorySyncError.operationFailed(
+            "Transferred \(totalBytesRead) bytes, expected \(expectedFileSize)")
     }
 }

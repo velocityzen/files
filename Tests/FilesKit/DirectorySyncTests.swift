@@ -1082,17 +1082,17 @@ struct DirectorySyncTests {
             right: rightDir.path(percentEncoded: false),
             mode: .twoWay(conflictResolution: .keepNewest),
             ignore: ignore,
-            matchPrecision: 0.8
+            matchPrecision: 0.75  // file1.txt and flie1.txt are 0.78 similar
         )
         var results: [OperationResult] = []
         for await opResult in stream {
             results.append(opResult)
         }
 
-        // Should recognize as a conflict and handle it
-        #expect(results.operations.count > 0)
-        // At least one operation should have occurred
-        #expect(results.succeeded + results.failed > 0)
+        // The fuzzy pair is resolved between file1.txt and flie1.txt, not a missing file
+        #expect(results.failed == 0)
+        #expect(results.operations.count == 1)
+        #expect(results.operations.first?.type == .update)
     }
 
     @Test("Fuzzy matching: disabled by default (matchPrecision = 1.0)")

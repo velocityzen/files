@@ -52,8 +52,8 @@ Patterns from all found files are merged together.
 - `?` - Matches a single character except `/`
 - `**` - Matches zero or more directories
 - `/` at start - Pattern is relative to directory root
-- `/` at end - Pattern matches directories only
-- `!` - Negates a pattern (includes files that were previously excluded)
+- `/` at end - Pattern matches directories only (e.g. `node_modules/` ignores everything inside any `node_modules` folder)
+- `!` - Negates a pattern (includes files that were previously excluded). As in `.gitignore`, it can't re-include a file inside an ignored directory
 - `#` - Comment line
 - Empty lines are ignored
 
@@ -302,6 +302,9 @@ The `--match-precision` option enables fuzzy matching of filenames using Levensh
 - **Matching is based on filename only**, not the full path
 - **Exact matches are always preferred** over fuzzy matches
 - **One-to-one mapping**: Each right file can only match one left file
+- **Best pairs first**: the most similar pairs are matched first; ties go to files in the same folder, then to the alphabetically first path, so every run gives the same result
+- **Ignore patterns and `--no-recursive` apply** to the files considered for matching
+- **Two-way sync** resolves a matched pair between its two actual files and overwrites the losing file in place, so each side keeps its own name
 
 ### Size Tolerance
 
@@ -425,6 +428,8 @@ Summary: 3 left-only, 2 right-only, 1 modified, 10 unchanged
 files /path/to/dir1 /path/to/dir2 --format json
 ```
 
+Status lines such as `Using config:` and `DRY RUN` go to stderr, so stdout holds only the JSON. `matches` maps each fuzzy-matched left file to the right file it was paired with (empty without `--match-precision`).
+
 Output:
 ```json
 {
@@ -442,6 +447,7 @@ Output:
     "README.md",
     "main.swift"
   ],
+  "matches": {},
   "summary": {
     "onlyInLeftCount": 2,
     "onlyInRightCount": 1,
