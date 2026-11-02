@@ -27,18 +27,12 @@ jobs:
       - name: Run tests
         run: swift test
 
-      # A test process or `files` run that crashes shows only its signal in the log; its
-      # crash report has the stack. ReportCrash writes it a moment after the crash.
-      - name: Show crash reports
+      # A crashed test process shows only its signal, and with every test started at once
+      # the log can't tell which one crashed; the runners keep no crash reports. Run one at
+      # a time, the last test started before a crash is the one.
+      - name: Rerun tests one at a time
         if: failure()
-        run: |
-          sleep 10
-          shopt -s nullglob
-          for report in ~/Library/Logs/DiagnosticReports/{swiftpm-testing-helper,FilesPackageTests,files}*.ips; do
-            echo "::group::$report"
-            cat "$report"
-            echo "::endgroup::"
-          done
+        run: swift test --no-parallel 2>&1 | tail -n 40
 
   test-linux:
     name: Run Linux Tests

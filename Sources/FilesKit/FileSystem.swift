@@ -137,10 +137,10 @@ func fileContentsEqual(_ left: String, _ right: String) -> Result<Bool, FileSyst
 private func contentsEqual(_ left: OpenFile, _ right: OpenFile) -> Result<Bool, FileSystemError> {
     // A small file gets a buffer one byte larger than itself, so one chunk reaches its end
     let chunkSize = left.size().map { min(comparisonChunkSize, $0 + 1) } ?? comparisonChunkSize
-    return withUnsafeTemporaryAllocation(byteCount: 2 * chunkSize, alignment: 16) { buffer in
+    return withHeapBuffer(byteCount: 2 * chunkSize) { buffer in
         let leftBuffer = UnsafeMutableRawBufferPointer(rebasing: buffer[..<chunkSize])
         let rightBuffer = UnsafeMutableRawBufferPointer(rebasing: buffer[chunkSize...])
-        // A temporary allocation always has an address; Glibc's memcmp takes no nil
+        // A heap buffer always has an address; Glibc's memcmp takes no nil
         guard let leftBytes = leftBuffer.baseAddress, let rightBytes = rightBuffer.baseAddress
         else {
             return .success(false)
@@ -163,6 +163,19 @@ private func contentsEqual(_ left: OpenFile, _ right: OpenFile) -> Result<Bool, 
             }
         }
     }
+}
+
+/// Runs `body` with a buffer on the heap. Buffers for file contents are hundreds of KB, and a
+/// temporary allocation that large can be reserved on the stack: one of a constant size is
+/// reserved there when the function starts, even if it then goes to the heap. A concurrency
+/// thread has a 512 KB stack, and overflowing it crashes with SIGBUS.
+private func withHeapBuffer<Value>(
+    byteCount: Int,
+    _ body: (UnsafeMutableRawBufferPointer) -> Value
+) -> Value {
+    let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: byteCount, alignment: 16)
+    defer { buffer.deallocate() }
+    return body(buffer)
 }
 
 /// A file opened for reading, see `openForReading(_:)`
@@ -316,7 +329,7 @@ func copyContents(
     to output: OutputFile,
     onChunk: (Int64) -> Void = { _ in }
 ) -> Result<Int64, FileSystemError> {
-    withUnsafeTemporaryAllocation(byteCount: copyChunkSize, alignment: 16) { buffer in
+    withHeapBuffer(byteCount: copyChunkSize) { buffer in
         var copied: Int64 = 0
         while true {
             let chunk = input.readChunk(into: buffer).flatMap { count in
