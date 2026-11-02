@@ -70,10 +70,18 @@ public struct OperationError: Error, Sendable {
 /// The result type for a single operation
 public typealias OperationResult = Result<OperationSuccess, OperationError>
 
-public enum DirectorySyncError: Error, Sendable {
+public enum DirectorySyncError: Error, Sendable, LocalizedError {
     case invalidDirectory(String)
     case accessDenied(String)
     case operationFailed(String)
+
+    public var errorDescription: String? {
+        switch self {
+            case .invalidDirectory(let path): "Invalid directory: \(path)"
+            case .accessDenied(let message): "Access denied: \(message)"
+            case .operationFailed(let message): "Operation failed: \(message)"
+        }
+    }
 
     /// Converts a DirectoryDifferenceError to a DirectorySyncError
     static func from(error: DirectoryDifferenceError) -> DirectorySyncError {

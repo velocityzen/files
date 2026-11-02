@@ -51,24 +51,8 @@ enum OutputFormatter {
 
     // MARK: - Error Printing
 
-    static func printError(_ error: DirectorySyncError) {
-        switch error {
-            case .invalidDirectory(let path):
-                FileHandle.standardError.write(Data("Error: Invalid directory: \(path)\n".utf8))
-            case .accessDenied(let message):
-                FileHandle.standardError.write(Data("Error: Access denied: \(message)\n".utf8))
-            case .operationFailed(let message):
-                FileHandle.standardError.write(Data("Error: Operation failed: \(message)\n".utf8))
-        }
-    }
-
-    static func printError(_ error: DirectoryDifferenceError) {
-        switch error {
-            case .invalidDirectory(let path):
-                FileHandle.standardError.write(Data("Error: Invalid directory: \(path)\n".utf8))
-            case .accessDenied(let message):
-                FileHandle.standardError.write(Data("Error: Access denied: \(message)\n".utf8))
-        }
+    static func printError(_ error: any Error) {
+        printDiagnostic("Error: \(error.localizedDescription)")
     }
 
     // MARK: - Sync Results Printing

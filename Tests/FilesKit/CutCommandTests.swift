@@ -31,10 +31,18 @@ struct CutCommandTests {
             String(decoding: dryRun.stdout, as: UTF8.self)
                 == "01 - Группа крови.flac\n02 - Закрой за мной дверь, я ухожу.flac\n")
         #expect(!FileManager.default.fileExists(atPath: path(directory, "01 - Группа крови.flac")))
+        #expect(dryRun.reports == [SentStatus("done", "Dry run: 2 tracks in Группа крови")])
 
         let cut = try TestHelpers.runFiles(["cut", "album.cue", "-o", "tracks"], in: directory)
         #expect(cut.status == 0)
         #expect(String(decoding: cut.stdout, as: UTF8.self).contains("Summary: 2 cut, 0 failed"))
+        #expect(
+            cut.reports == [
+                SentStatus("working", "Cutting Группа крови", progress: 0),
+                SentStatus("working", "Cutting Группа крови (1 of 2 tracks)", progress: 50),
+                SentStatus("working", "Cutting Группа крови (2 of 2 tracks)", progress: 100),
+                SentStatus("done", "Cut 2 tracks from Группа крови"),
+            ])
         let tracks = try FileManager.default.contentsOfDirectory(
             atPath: path(directory, "tracks"))
         #expect(
@@ -45,6 +53,8 @@ struct CutCommandTests {
         let again = try TestHelpers.runFiles(["cut", "album.cue", "-o", "tracks"], in: directory)
         #expect(again.status == 1)
         #expect(String(decoding: again.stdout, as: UTF8.self).contains("--overwrite"))
+        #expect(
+            again.reports.last == SentStatus("error", "2 of 2 tracks failed cutting Группа крови"))
 
         let overwrite = try TestHelpers.runFiles(
             ["cut", "album.cue", "-o", "tracks", "--overwrite"], in: directory)
@@ -79,6 +89,8 @@ struct CutCommandTests {
         let broken = try TestHelpers.runFiles(["cut", "broken.cue"], in: directory)
         #expect(broken.status == 2)
         #expect(broken.stderr.contains("TRACK before any FILE"))
+        #expect(broken.reports.map(\.state) == ["error"])
+        #expect(broken.reports.first?.message?.contains("TRACK before any FILE") == true)
 
         let missing = try TestHelpers.runFiles(["cut", "silent.cue"], in: directory)
         #expect(missing.status == 2)
@@ -87,6 +99,8 @@ struct CutCommandTests {
         let badEncoding = try TestHelpers.runFiles(
             ["cut", "silent.cue", "--encoding", "klingon"], in: directory)
         #expect(badEncoding.status == 64)
+        // Bad options are refused before anything starts, so there is nothing to report
+        #expect(badEncoding.reports.isEmpty)
     }
 
     @Test("Encoding names are IANA charset names")

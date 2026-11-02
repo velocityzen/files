@@ -133,14 +133,23 @@ enum TestHelpers {
 
     private final class BundleToken {}
 
-    /// Runs the `files` executable in `directory` and captures its output
-    static func runFiles(_ arguments: [String], in directory: URL) throws -> (
-        status: Int32, stdout: Data, stderr: String
-    ) {
+    /// Runs the `files` executable in `directory` and captures its output. Status reports go
+    /// to a temporary file instead of the terminal running the tests, and come back decoded;
+    /// `environment` adds to or overrides the inherited variables, `FILES_STATUS` included.
+    static func runFiles(
+        _ arguments: [String], in directory: URL, environment: [String: String] = [:]
+    ) throws -> (status: Int32, stdout: Data, stderr: String, reports: [SentStatus]) {
+        let statusLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("files-status-\(UUID().uuidString).log")
+        defer { try? FileManager.default.removeItem(at: statusLog) }
+
         let process = Process()
         process.executableURL = filesExecutable
         process.arguments = arguments
         process.currentDirectoryURL = directory
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(["FILES_STATUS": statusLog.path(percentEncoded: false)]) { $1 }
+            .merging(environment) { $1 }
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -152,6 +161,48 @@ enum TestHelpers {
         let errors = stderr.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        return (process.terminationStatus, output, String(decoding: errors, as: UTF8.self))
+        let reports = (try? String(contentsOf: statusLog, encoding: .utf8)).map(SentStatus.decode)
+        return (
+            process.terminationStatus, output, String(decoding: errors, as: UTF8.self),
+            reports ?? []
+        )
+    }
+}
+
+/// A Program Status Protocol report the `files` executable sent, decoded
+struct SentStatus: Equatable, CustomStringConvertible {
+    var state: String
+    var message: String?
+    var progress: Int?
+    var app: String?
+
+    init(_ state: String, _ message: String? = nil, progress: Int? = nil, app: String? = "files") {
+        self.state = state
+        self.message = message
+        self.progress = progress
+        self.app = app
+    }
+
+    var description: String {
+        "\(state)\(progress.map { " \($0)%" } ?? ""): \(message ?? "")"
+    }
+
+    /// Every `ESC ] 7501 ; key=value:… ESC \` sequence in the text; `msg` is base64
+    static func decode(_ text: String) -> [SentStatus] {
+        text.components(separatedBy: "\u{1B}]7501;").dropFirst().map { sequence in
+            let fields = Dictionary(
+                sequence.replacing("\u{1B}\\", with: "").split(separator: ":").map { pair in
+                    let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                    return (parts[0], parts.count > 1 ? parts[1] : "")
+                },
+                uniquingKeysWith: { $1 })
+            return SentStatus(
+                fields["state"] ?? "",
+                fields["msg"].flatMap { Data(base64Encoded: $0) }.map {
+                    String(decoding: $0, as: UTF8.self)
+                },
+                progress: fields["progress"].flatMap { Int($0) },
+                app: fields["app"])
+        }
     }
 }

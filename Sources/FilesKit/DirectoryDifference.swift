@@ -92,9 +92,16 @@ public struct DirectoryDifference: Sendable, Codable {
     }
 }
 
-public enum DirectoryDifferenceError: Error, Sendable {
+public enum DirectoryDifferenceError: Error, Sendable, LocalizedError {
     case invalidDirectory(String)
     case accessDenied(String)
+
+    public var errorDescription: String? {
+        switch self {
+            case .invalidDirectory(let path): "Invalid directory: \(path)"
+            case .accessDenied(let message): "Access denied: \(message)"
+        }
+    }
 }
 
 /// Specifies what files from the right directory to include in the comparison result

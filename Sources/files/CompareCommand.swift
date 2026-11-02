@@ -82,6 +82,9 @@ extension Files {
 
             OutputFormatter.printConfig(config, ignore: ignore, verbose: verbose)
 
+            let subject = "\(Status.name(of: leftPath)) and \(Status.name(of: rightPath))"
+            Status.working("Comparing \(subject)")
+
             let diffResult = await directoryDifference(
                 left: leftPath,
                 right: rightPath,
@@ -95,10 +98,12 @@ extension Files {
                 case .success(let diff):
                     OutputFormatter.printDifferenceResults(
                         diff: diff, format: format, verbose: verbose)
+                    Status.done(Status.comparison(diff, of: subject))
                     throw diff.hasDifferences ? ExitCode(1) : ExitCode.success
 
                 case .failure(let error):
                     OutputFormatter.printError(error)
+                    Status.failed(error.localizedDescription)
                     throw ExitCode(2)
             }
         }

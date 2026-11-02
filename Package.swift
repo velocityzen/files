@@ -1,10 +1,10 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.3
 import PackageDescription
 
 let package = Package(
     name: "Files",
     platforms: [
-        .macOS(.v15)
+        .macOS(.v26)
     ],
     products: [
         .library(
@@ -17,10 +17,10 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
-        // 4.x and bracket 2.x need macOS 26 and Swift tools 6.3
-        .package(url: "https://github.com/velocityzen/fp-swift", from: "3.3.0"),
-        .package(url: "https://github.com/velocityzen/fp-swift-bracket", from: "1.3.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),
+        .package(url: "https://github.com/velocityzen/fp-swift", from: "4.2.1"),
+        .package(url: "https://github.com/velocityzen/fp-swift-bracket", from: "2.1.0"),
+        .package(url: "https://github.com/velocityzen/ProgramStatus", from: "0.4.0"),
     ],
     targets: [
         .target(
@@ -39,6 +39,7 @@ let package = Package(
                 "FilesKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "FP", package: "fp-swift"),
+                .product(name: "ProgramStatus", package: "ProgramStatus"),
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
@@ -51,6 +52,7 @@ let package = Package(
                 "files",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "FP", package: "fp-swift"),
+                .product(name: "ProgramStatus", package: "ProgramStatus"),
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)

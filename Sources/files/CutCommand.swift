@@ -52,6 +52,8 @@ extension Files {
             if dryRun {
                 OutputFormatter.printDiagnostic("🔍 DRY RUN - No files will be written\n")
                 tracks.forEach { printTrack($0) }
+                Status.done(
+                    "Dry run: \(Status.count(tracks.count, "track")) in \(albumName(tracks))")
                 return
             }
             try await cut(tracks).get()
@@ -62,8 +64,13 @@ extension Files {
             CueSheet.load(from: cuePath, encoding: encoding.flatMap(Self.stringEncoding(named:)))
                 .tap(noteEncoding)
                 .flatMap { $0.sheet.plan(cuePath: cuePath) }
-                .tapError { OutputFormatter.printDiagnostic("Error: \($0.localizedDescription)") }
+                .tapError(reportCueError)
                 .mapError { _ in ExitCode(2) }
+        }
+
+        private func reportCueError(_ error: CueSheetError) {
+            OutputFormatter.printDiagnostic("Error: \(error.localizedDescription)")
+            Status.failed(error.localizedDescription)
         }
 
         /// A detected legacy encoding may be a wrong guess, so say which one was used
@@ -76,6 +83,12 @@ extension Files {
             )
         }
 
+        /// The album title, or the cue sheet's name when it has none
+        private func albumName(_ tracks: [CueTrack]) -> String {
+            tracks.first?.tags.album
+                ?? URL(fileURLWithPath: cuePath).deletingPathExtension().lastPathComponent
+        }
+
         private var outputDirectory: String {
             output
                 ?? URL(fileURLWithPath: cuePath).deletingLastPathComponent()
@@ -85,12 +98,17 @@ extension Files {
         #if canImport(AVFoundation)
         /// Cuts the tracks, printing each as it finishes; any failed track exits with 1
         private func cut(_ tracks: [CueTrack]) async -> Result<Void, ExitCode> {
+            let album = albumName(tracks)
+            Status.working("Cutting \(album)", progress: 0)
             let results = await cutTracks(tracks, to: outputDirectory, overwrite: overwrite)
                 .reduce(into: [CueTrackResult]()) { results, result in
                     printResult(result)
                     results.append(result)
+                    Status.working(
+                        "Cutting \(album) (\(results.count) of \(Status.count(tracks.count, "track")))",
+                        progress: results.count * 100 / tracks.count)
                 }
-            return summarize(results)
+            return summarize(results, album: album)
         }
 
         private func printResult(_ result: CueTrackResult) {
@@ -103,11 +121,20 @@ extension Files {
             )
         }
 
-        private func summarize(_ results: [CueTrackResult]) -> Result<Void, ExitCode> {
+        private func summarize(_ results: [CueTrackResult], album: String) -> Result<
+            Void, ExitCode
+        > {
             let (cut, failed) = results.separate()
             print()
             print("Summary: \(cut.count) cut, \(failed.count) failed")
-            return failed.isEmpty ? .success(()) : .failure(ExitCode(1))
+            guard failed.isEmpty else {
+                Status.failed(
+                    "\(failed.count) of \(Status.count(results.count, "track")) failed cutting \(album)"
+                )
+                return .failure(ExitCode(1))
+            }
+            Status.done("Cut \(Status.count(cut.count, "track")) from \(album)")
+            return .success(())
         }
         #else
         private func cut(_ tracks: [CueTrack]) async -> Result<Void, ExitCode> {

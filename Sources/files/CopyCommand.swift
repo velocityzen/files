@@ -94,8 +94,12 @@ extension Files {
                 OutputFormatter.printDiagnostic("🔍 DRY RUN - No changes will be made\n")
             }
 
+            let status = TransferStatus(.copy, from: sourcePath, to: destinationPath)
+            status.started()
+
             // Setup progress display for text format
             let progress = getPrintProgress(format != .text || dryRun)
+            let reportFile = status.fileReporter(dryRun: dryRun)
 
             let progressStream = await directorySync(
                 left: sourcePath,
@@ -119,6 +123,7 @@ extension Files {
                     }
                 latestResults[operation] = result
                 progress(result)
+                reportFile(result)
             }
 
             let results = Array(latestResults.values)
@@ -130,6 +135,7 @@ extension Files {
                 dryRun: dryRun
             )
 
+            status.finished(results, dryRun: dryRun)
             if results.failed > 0 {
                 throw ExitCode(1)
             }

@@ -28,7 +28,12 @@ A fast and efficient command-line tool for comparing and synchronizing directori
 - **Tags from the cue sheet** - FLAC tracks get title, artist, album, track and disc numbers
 - **Legacy encodings** - Detects Windows-1251, Windows-1252, Shift JIS and others
 
+### Terminal Status
+- **Program Status Protocol (OSC 7501)** - Terminals that support it can show progress on the tab and notify when a long sync, copy or cut finishes
+
 ## Installation
+
+Files requires macOS 26 or later.
 
 ### Download Pre-built Binary
 
@@ -186,6 +191,23 @@ files sync source dest --no-config
 ### Default Behavior
 
 Like `.filesignore`, the `.files` configuration file is automatically excluded from comparison and sync operations. It will not be copied to destination directories.
+
+## Terminal Status Reports
+
+Files tells the terminal what it is doing with the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status) (OSC 7501), so a terminal that supports it can show progress and notify you when a command finishes. Terminals that don't support the protocol ignore the reports.
+
+| Command | While it runs | When it ends |
+|---|---|---|
+| `compare`, `compare-snapshot` | Comparing `left` and `right` | Done, with the number of differences, or error |
+| `sync`, `cp` | The route, then each file being copied, updated or deleted | Done, with the number of operations, or error if any failed |
+| `cut` | The album, with the share of tracks cut so far | Done, or error if any track failed |
+
+Reports go to the controlling terminal, never into redirected output, so pipes and `--format json` stay clean. Set `FILES_STATUS` to change that:
+
+```bash
+FILES_STATUS=off files sync src dst              # send no reports
+FILES_STATUS=status.log files cut album.cue      # append the reports to a file
+```
 
 ## Usage
 
@@ -743,6 +765,8 @@ files sync ~/projects/myapp /mnt/desktop/projects/myapp --two-way --conflict-res
 ```
 
 # Building
+
+Building needs Swift 6.3 or later (Xcode 26.4 or later).
 
 ```
 swift build -c release \

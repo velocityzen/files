@@ -37,6 +37,9 @@ extension Files {
         var format: OutputFormat = .text
 
         mutating func run() async throws {
+            let subject = "\(Status.name(of: leftPath)) and \(Status.name(of: rightPath))"
+            Status.working("Comparing \(subject)")
+
             do {
                 let diff = try await compareSnapshots(
                     left: leftPath,
@@ -49,10 +52,13 @@ extension Files {
                     verbose: verbose
                 )
 
+                Status.done(Status.comparison(diff, of: subject))
+
                 // Exit with non-zero if there are differences
                 throw diff.hasDifferences ? ExitCode(1) : ExitCode.success
             } catch let error as DirectoryDifferenceError {
                 OutputFormatter.printError(error)
+                Status.failed(error.localizedDescription)
                 throw ExitCode(2)
             }
         }
