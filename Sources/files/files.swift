@@ -13,6 +13,7 @@ struct Files: AsyncParsableCommand {
             - One-way and two-way directory synchronization
             - Copy new and modified files without deletion
             - Conflict resolution strategies
+            - Cue sheet splitting of album images
             - Dry-run mode for previewing changes
             """,
         version: "1.6.0",
@@ -21,6 +22,7 @@ struct Files: AsyncParsableCommand {
             CompareSnapshotCommand.self,
             SyncCommand.self,
             CopyCommand.self,
+            CutCommand.self,
         ],
         defaultSubcommand: CompareCommand.self
     )

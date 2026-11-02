@@ -1,6 +1,6 @@
 # Files
 
-A fast and efficient command-line tool for comparing and synchronizing directories.
+A fast and efficient command-line tool for comparing and synchronizing directories, and for splitting album images into tracks with cue sheets.
 
 ## Features
 
@@ -21,6 +21,12 @@ A fast and efficient command-line tool for comparing and synchronizing directori
 - **Conflict resolution strategies** - Keep newest, source, destination, or skip
 - **Dry-run mode** - Preview changes before applying them
 - **Safe operations** - Creates intermediate directories and validates paths
+
+### Cue Sheet Splitting
+- **Lossless, bit-exact cuts** - Tracks keep the source format and bit depth
+- **FLAC, WAV, AIFF** natively through Core Audio; **APE and WavPack** through ffmpeg
+- **Tags from the cue sheet** - FLAC tracks get title, artist, album, track and disc numbers
+- **Legacy encodings** - Detects Windows-1251, Windows-1252, Shift JIS and others
 
 ## Installation
 
@@ -286,6 +292,50 @@ files sync <source-directory> <destination-directory> [options]
 - `source` - Always prefer the source file
 - `destination` - Always prefer the destination file
 - `skip` - Skip conflicting files, leave both unchanged
+
+### Cut Command
+
+Split an album image into tracks using its cue sheet (macOS only):
+
+```bash
+files cut <cue-file> [options]
+```
+
+- FLAC, WAV and AIFF are cut with Core Audio and keep their format and bit depth (16, 20 or 24-bit).
+- APE and WavPack need [ffmpeg](https://ffmpeg.org) (`brew install ffmpeg`), which is found on `PATH`, `/opt/homebrew/bin` or `/usr/local/bin`. They are decoded once and written as FLAC.
+- FLAC tracks are tagged with `TITLE`, `ARTIST`, `ALBUM`, `ALBUMARTIST`, `COMPOSER`, `GENRE`, `DATE`, `ISRC`, `TRACKNUMBER`, `TRACKTOTAL`, `DISCNUMBER` and `DISCTOTAL` from the cue sheet. WAV and AIFF tracks are not tagged.
+- Tracks are named `NN - Title.ext`, or `NN - Performer - Title.ext` when a track's performer differs from the album's.
+
+How tracks are cut:
+
+- A track runs from its `INDEX 01` to the next track's `INDEX 01`, so pregaps (`INDEX 00`) stay at the end of the track before them.
+- The first track of each file starts at the beginning of the file, so a hidden track or lead-in is kept in track 1.
+- With several `FILE` lines, a track ends with its file.
+- If the audio named by `FILE` is missing, the same name with another audio extension is used (a `.wav` sheet next to a `.flac` image), and a sheet with one `FILE` also matches audio named like the cue sheet.
+
+#### Options
+
+- `--output DIR`, `-o DIR` - Directory to write the tracks to (default: the cue sheet's directory)
+- `--encoding NAME` - Cue sheet text encoding as an IANA name, e.g. `windows-1251` or `shift_jis` (default: UTF-8, then detected)
+- `--overwrite` - Replace track files that already exist (a source file is never replaced)
+- `--dry-run` - List the tracks without cutting them
+- `--verbose`, `-v` - Show the source and time range of each track
+
+#### Exit Codes
+
+- `0` - All tracks were cut
+- `1` - One or more tracks failed (for example, the file already exists)
+- `2` - The cue sheet could not be read or its audio was not found
+
+#### Example
+
+```bash
+# Preview the track names and ranges
+files cut "Album.cue" --dry-run --verbose
+
+# Cut into a separate folder
+files cut "Album.cue" -o tracks
+```
 
 ## Fuzzy Filename Matching
 

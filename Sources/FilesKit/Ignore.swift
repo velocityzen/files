@@ -153,14 +153,8 @@ public struct Ignore: Sendable {
     public static func load(leftPath: String, rightPath: String) async -> Ignore {
         var filePaths: [String] = []
 
-        if let homeDir = FileManager.default.homeDirectoryForCurrentUser.path(
-            percentEncoded: false) as String?
-        {
-            let homePath = URL(fileURLWithPath: homeDir)
-                .appendingPathComponent(".filesignore")
-                .path(percentEncoded: false)
-            filePaths.append(homePath)
-        }
+        filePaths.append(
+            URL.homeDirectory.appending(path: ".filesignore").path(percentEncoded: false))
 
         filePaths.append(
             URL(fileURLWithPath: leftPath)

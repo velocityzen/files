@@ -375,44 +375,37 @@ private func resolveConflictByNewest(
     leftFile: String,
     rightFile: String
 ) async -> Result<FileOperation?, DirectorySyncError> {
-    let fileManager = FileManager.default
+    fileAttributes(at: leftFile)
+        .flatMap { left in fileAttributes(at: rightFile).map { right in (left, right) } }
+        .mapError { .accessDenied("Failed to read file attributes: \($0.localizedDescription)") }
+        .map { left, right in
+            guard let leftDate = left.modificationDate, let rightDate = right.modificationDate
+            else {
+                // If we can't determine dates, skip
+                return nil
+            }
 
-    do {
-        let leftAttrs = try fileManager.attributesOfItem(atPath: leftFile)
-        let rightAttrs = try fileManager.attributesOfItem(atPath: rightFile)
-
-        guard let leftDate = leftAttrs[.modificationDate] as? Date,
-            let rightDate = rightAttrs[.modificationDate] as? Date
-        else {
-            // If we can't determine dates, skip
-            return .success(nil)
-        }
-
-        if leftDate > rightDate {
-            // Left is newer, copy to right
-            return .success(
-                FileOperation(
+            if leftDate > rightDate {
+                // Left is newer, copy to right
+                return FileOperation(
                     type: .update,
                     relativePath: relativePath,
                     left: leftFile,
                     right: rightFile
-                ))
-        } else if rightDate > leftDate {
-            // Right is newer, copy to left
-            return .success(
-                FileOperation(
+                )
+            } else if rightDate > leftDate {
+                // Right is newer, copy to left
+                return FileOperation(
                     type: .update,
                     relativePath: relativePath,
                     left: rightFile,
                     right: leftFile
-                ))
-        } else {
-            // Same modification time, skip
-            return .success(nil)
+                )
+            } else {
+                // Same modification time, skip
+                return nil
+            }
         }
-    } catch {
-        return .failure(.accessDenied("Failed to read file attributes: \(error)"))
-    }
 }
 
 /// Resolves a conflict between two modified files
@@ -512,75 +505,43 @@ private func copyOperation(
     // Copy next to the destination first, so a failed or interrupted copy
     // never touches an existing file
     let rightURL = URL(fileURLWithPath: operation.right)
-    let rightDir = rightURL.deletingLastPathComponent()
-    let tempURL = rightDir.appendingPathComponent(
-        ".\(rightURL.lastPathComponent).\(UUID().uuidString).files-tmp")
-    let tempPath = tempURL.path(percentEncoded: false)
+    let rightDir = rightURL.deletingLastPathComponent().path(percentEncoded: false)
+    let tempPath = rightURL.deletingLastPathComponent()
+        .appendingPathComponent(".\(rightURL.lastPathComponent).\(UUID().uuidString).files-tmp")
+        .path(percentEncoded: false)
 
     do {
-        // Get file size
-        let attrs = try FileManager.default.attributesOfItem(atPath: left)
-        let fileSize = (attrs[.size] as? Int64) ?? 0
+        let attributes = try fileAttributes(at: left).get()
+        try createDirectory(at: rightDir).get()
 
-        // Create right directory if needed
-        try FileManager.default.createDirectory(
-            at: rightDir,
-            withIntermediateDirectories: true,
-            attributes: nil
-        )
-
-        if fileSize < minSizeToChunk {
+        if attributes.size < minSizeToChunk {
             // For small files, use simple copy
-            try FileManager.default.copyItem(atPath: left, toPath: tempPath)
+            try copyItem(at: left, to: tempPath).get()
         } else {
             try copyFileWithProgress(
                 from: left,
                 to: tempPath,
-                expectedFileSize: fileSize
+                expectedFileSize: attributes.size
             ) { bytesCopied in
                 continuation.success(operation: operation, bytesTransferred: bytesCopied)
             }
 
             // A streamed copy has fresh metadata, so keep what copyItem would keep
-            try FileManager.default.setAttributes(
-                attrs.filter { $0.key == .posixPermissions || $0.key == .modificationDate },
-                ofItemAtPath: tempPath
-            )
+            try setFileAttributes(attributes, at: tempPath).get()
         }
 
-        try moveReplacingItem(at: tempURL, to: rightURL)
-        continuation.success(operation: operation, bytesTransferred: fileSize)
+        try moveReplacingItem(at: tempPath, to: operation.right).get()
+        continuation.success(operation: operation, bytesTransferred: attributes.size)
     } catch {
-        try? FileManager.default.removeItem(at: tempURL)
+        _ = removeItem(at: tempPath)
         return continuation.failure(operation: operation, error: error)
     }
 }
 
-/// Moves a file into place, atomically replacing an existing file at the destination
-private func moveReplacingItem(at source: URL, to destination: URL) throws {
-    if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
-        // Keep the copied file's metadata instead of merging in the old file's
-        _ = try FileManager.default.replaceItemAt(
-            destination,
-            withItemAt: source,
-            backupItemName: nil,
-            options: [.usingNewMetadataOnly]
-        )
-    } else {
-        try FileManager.default.moveItem(at: source, to: destination)
-    }
-}
-
 private func deleteOperation(for operation: FileOperation) -> OperationResult {
-    do {
-        if FileManager.default.fileExists(atPath: operation.right) {
-            try FileManager.default.removeItem(atPath: operation.right)
-        }
-
-        return .success(OperationSuccess(operation: operation, bytesTransferred: 0))
-    } catch {
-        return .failure(OperationError(operation: operation, error: error))
-    }
+    removeItemIfPresent(at: operation.right)
+        .map { OperationSuccess(operation: operation, bytesTransferred: 0) }
+        .mapError { OperationError(operation: operation, error: $0) }
 }
 
 /// Copies a file in chunks, calling `onProgress` with the bytes copied so far at intervals

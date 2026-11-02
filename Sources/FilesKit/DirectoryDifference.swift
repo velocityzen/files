@@ -129,12 +129,8 @@ public func directoryDifference(
     matchPrecision: Double = 1.0,
     sizeTolerance: Double = 0.0
 ) async -> Result<DirectoryDifference, DirectoryDifferenceError> {
-    do {
-        try validateDirectories(leftPath: leftPath, rightPath: rightPath)
-    } catch let error as DirectoryDifferenceError {
+    if case .failure(let error) = validateDirectories(leftPath: leftPath, rightPath: rightPath) {
         return .failure(error)
-    } catch {
-        return .failure(.accessDenied("\(error)"))
     }
 
     // Load ignore patterns
@@ -188,26 +184,21 @@ public func directoryDifference(
     } catch let error as DirectoryDifferenceError {
         return .failure(error)
     } catch {
-        return .failure(.accessDenied("\(error)"))
+        return .failure(.accessDenied(error.localizedDescription))
     }
 }
 
 /// Validates that both paths are valid directories
-private func validateDirectories(leftPath: String, rightPath: String) throws {
-    let fileManager = FileManager.default
-
-    var isDirectory: ObjCBool = false
-    guard fileManager.fileExists(atPath: leftPath, isDirectory: &isDirectory),
-        isDirectory.boolValue
-    else {
-        throw DirectoryDifferenceError.invalidDirectory(leftPath)
+private func validateDirectories(leftPath: String, rightPath: String) -> Result<
+    Void, DirectoryDifferenceError
+> {
+    guard directoryExists(at: leftPath) else {
+        return .failure(.invalidDirectory(leftPath))
     }
-
-    guard fileManager.fileExists(atPath: rightPath, isDirectory: &isDirectory),
-        isDirectory.boolValue
-    else {
-        throw DirectoryDifferenceError.invalidDirectory(rightPath)
+    guard directoryExists(at: rightPath) else {
+        return .failure(.invalidDirectory(rightPath))
     }
+    return .success(())
 }
 
 /// Full comparison mode: scans both directories completely
@@ -507,8 +498,7 @@ private func checkLeftFilesInRight(
                     .appendingPathComponent(relativePath)
                     .path(percentEncoded: false)
 
-                let fileManager = FileManager.default
-                guard fileManager.fileExists(atPath: fileRight) else {
+                guard fileExists(at: fileRight) else {
                     return (relativePath, .onlyInLeft)
                 }
 
@@ -580,7 +570,6 @@ private func scanLeafDirectories(
     ignore: Ignore
 ) async throws -> Set<String> {
     try await Task.detached {
-        let fileManager = FileManager.default
         let baseURL = URL(fileURLWithPath: path)
         let basePath = standardizedPath(of: baseURL)
 
@@ -591,7 +580,7 @@ private func scanLeafDirectories(
             let leafURL = baseURL.appendingPathComponent(leafDir)
 
             guard
-                let enumerator = fileManager.enumerator(
+                case .success(let enumerator) = directoryEnumerator(
                     at: leafURL,
                     includingPropertiesForKeys: [.isDirectoryKey],
                     options: [.skipsSubdirectoryDescendants]
@@ -625,17 +614,13 @@ private func scanDirectory(at path: String, recursive: Bool, ignore: Ignore)
     let baseURL = URL(fileURLWithPath: path)
 
     return try await Task.detached {
-        let fileManager = FileManager.default
-
-        guard
-            let enumerator = fileManager.enumerator(
-                at: baseURL,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: recursive ? [] : [.skipsSubdirectoryDescendants]
-            )
-        else {
-            throw DirectoryDifferenceError.accessDenied(path)
-        }
+        let enumerator = try directoryEnumerator(
+            at: baseURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: recursive ? [] : [.skipsSubdirectoryDescendants]
+        )
+        .mapError { _ in DirectoryDifferenceError.accessDenied(path) }
+        .get()
 
         let basePath = standardizedPath(of: baseURL)
         var files = Set<String>()
@@ -712,26 +697,13 @@ private func findModifiedFiles(
 @concurrent
 private func filesAreDifferent(_ path1: String, _ path2: String) async throws -> Bool {
     try await Task.detached {
-        let fileManager = FileManager.default
-
         // First compare file sizes for quick check
-        let attrs1 = try fileManager.attributesOfItem(atPath: path1)
-        let attrs2 = try fileManager.attributesOfItem(atPath: path2)
-
-        if let size1 = attrs1[.size] as? Int64, let size2 = attrs2[.size] as? Int64 {
-            if size1 != size2 {
-                return true
-            }
+        if try fileAttributes(at: path1).get().size != fileAttributes(at: path2).get().size {
+            return true
         }
 
         // If sizes match, compare content
-        guard let data1 = fileManager.contents(atPath: path1),
-            let data2 = fileManager.contents(atPath: path2)
-        else {
-            throw DirectoryDifferenceError.accessDenied("Could not read file contents")
-        }
-
-        return data1 != data2
+        return try fileContents(at: path1).get() != fileContents(at: path2).get()
     }.value
 }
 
@@ -743,16 +715,8 @@ private func filesAreSimilarSize(
     tolerance: Double
 ) async throws -> Bool {
     try await Task.detached {
-        let fileManager = FileManager.default
-
-        let leftAttrs = try fileManager.attributesOfItem(atPath: left)
-        let rightAttrs = try fileManager.attributesOfItem(atPath: right)
-
-        guard let leftSize = leftAttrs[.size] as? Int64,
-            let rightSize = rightAttrs[.size] as? Int64
-        else {
-            return false
-        }
+        let leftSize = try fileAttributes(at: left).get().size
+        let rightSize = try fileAttributes(at: right).get().size
 
         if leftSize == 0 && rightSize == 0 {
             return true
@@ -793,17 +757,15 @@ public func compareSnapshots(
 @concurrent
 private func loadJSONFile(at path: String) async throws -> DirectoryDifference {
     try await Task.detached {
-        let fileManager = FileManager.default
-
         // Validate that file exists
-        guard fileManager.fileExists(atPath: path) else {
+        guard fileExists(at: path) else {
             throw DirectoryDifferenceError.invalidDirectory(path)
         }
 
         // Read file
-        guard let data = fileManager.contents(atPath: path) else {
-            throw DirectoryDifferenceError.accessDenied("Could not read \(path)")
-        }
+        let data = try fileContents(at: path)
+            .mapError { DirectoryDifferenceError.accessDenied($0.localizedDescription) }
+            .get()
 
         // Decode JSON
         let decoder = JSONDecoder()
