@@ -181,4 +181,34 @@ struct IgnoreTests {
         // Last matching pattern wins
         #expect(!patterns.shouldIgnore(".filesignore"))
     }
+
+    @Test("Text a pattern needs is found wherever its wildcards and escapes put it")
+    func testRequiredText() {
+        // "**/" also matches no directories, so its slash is not required
+        let nested = Ignore(patterns: ["build/**/*.txt"])
+        #expect(nested.shouldIgnore("build/notes.txt"))
+        #expect(nested.shouldIgnore("app/build/a/b/notes.txt"))
+        #expect(!nested.shouldIgnore("build.txt"))
+
+        let escaped = Ignore(patterns: ["\\*.bak", "a\\?b"])
+        #expect(escaped.shouldIgnore("dir/*.bak"))
+        #expect(!escaped.shouldIgnore("file.bak"))
+        #expect(escaped.shouldIgnore("a?b"))
+        #expect(!escaped.shouldIgnore("axb"))
+
+        let rooted = Ignore(patterns: ["/out?/*.o"])
+        #expect(rooted.shouldIgnore("out1/main.o"))
+        #expect(!rooted.shouldIgnore("src/out1/main.o"))
+
+        // Only wildcards: every path has to be matched
+        let wildcards = Ignore(patterns: ["*", "!**"])
+        #expect(!wildcards.shouldIgnore("any/path.txt"))
+    }
+
+    @Test("A pattern ending in a backslash escapes nothing")
+    func testTrailingBackslash() {
+        let patterns = Ignore(patterns: ["temp\\"])
+        #expect(patterns.shouldIgnore("temp"))
+        #expect(!patterns.shouldIgnore("temp2"))
+    }
 }

@@ -18,6 +18,11 @@
 # Only applies to fuzzy-matched pairs (matchPrecision < 1.0)
 # sizeTolerance = 0.2
 
+# How many files to read and compare at once (1 or more, default 4)
+# 4 suits a local SSD, where more at once only burns CPU; raise it for a
+# network volume, where each read waits on the server
+# concurrentReads = 4
+
 # Scan subdirectories recursively (true/false)
 # recursive = true
 

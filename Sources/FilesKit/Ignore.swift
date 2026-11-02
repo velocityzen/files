@@ -15,6 +15,8 @@ public struct Ignore: Sendable {
         let isNegation: Bool
         let isDirectoryOnly: Bool
         let regex: NSRegularExpression
+        /// UTF-8 of plain text every path the pattern matches contains, see `translate(_:)`
+        let requiredText: [UInt8]
 
         init?(line: String) {
             var trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -41,17 +43,20 @@ public struct Ignore: Sendable {
             self.isDirectoryOnly = isDirectoryOnly
 
             // Convert glob pattern to regex
-            let regexPattern = Self.globToRegex(trimmed)
+            let (regexPattern, requiredText) = Self.translate(trimmed)
             guard let regex = try? NSRegularExpression(pattern: regexPattern, options: []) else {
                 return nil
             }
 
             self.regex = regex
+            self.requiredText = Array(requiredText.utf8)
         }
 
-        /// Converts a glob pattern to a regular expression pattern
-        private static func globToRegex(_ glob: String) -> String {
+        /// Converts a glob pattern to a regular expression pattern, and finds the longest run
+        /// of plain text between its wildcards, which every path the pattern matches contains
+        private static func translate(_ glob: String) -> (regex: String, requiredText: String) {
             var pattern = ""
+            var runs = [""]
             var i = glob.startIndex
 
             // If pattern starts with /, it's relative to root
@@ -66,6 +71,7 @@ public struct Ignore: Sendable {
 
                 switch char {
                     case "*":
+                        runs.append("")
                         // Check for ** (matches any number of directories)
                         let nextIndex = glob.index(after: i)
                         if nextIndex < glob.endIndex && glob[nextIndex] == "*" {
@@ -90,16 +96,21 @@ public struct Ignore: Sendable {
 
                     case "?":
                         pattern += "[^/]"
+                        runs.append("")
 
                     case ".":
                         pattern += "\\."
+                        runs[runs.count - 1].append(char)
 
                     case "\\":
-                        // Escape character
-                        i = glob.index(after: i)
-                        if i < glob.endIndex {
-                            pattern += NSRegularExpression.escapedPattern(for: String(glob[i]))
+                        // Escape character; a trailing one escapes nothing
+                        let escaped = glob.index(after: i)
+                        guard escaped < glob.endIndex else {
+                            break
                         }
+                        i = escaped
+                        pattern += NSRegularExpression.escapedPattern(for: String(glob[i]))
+                        runs[runs.count - 1].append(glob[i])
 
                     default:
                         if char.isLetter || char.isNumber || char == "/" || char == "-"
@@ -109,6 +120,7 @@ public struct Ignore: Sendable {
                         } else {
                             pattern += NSRegularExpression.escapedPattern(for: String(char))
                         }
+                        runs[runs.count - 1].append(char)
                 }
 
                 i = glob.index(after: i)
@@ -122,12 +134,21 @@ public struct Ignore: Sendable {
             // Pattern can match at the end or before a /
             pattern += "($|/)"
 
-            return pattern
+            return (pattern, runs.max { $0.utf8.count < $1.utf8.count } ?? "")
         }
 
         func matches(_ path: String, isDirectory: Bool) -> Bool {
             // If pattern is directory-only and path is not a directory, skip
             if isDirectoryOnly && !isDirectory {
+                return false
+            }
+
+            // Most paths lack the pattern's plain text, which is far cheaper to look for than
+            // running the regular expression. Both compare code points exactly.
+            if !requiredText.isEmpty,
+                path.utf8.withContiguousStorageIfAvailable({ $0.contains(bytes: requiredText) })
+                    == false
+            {
                 return false
             }
 
@@ -219,5 +240,17 @@ public struct Ignore: Sendable {
         }
 
         return ignored
+    }
+}
+
+extension UnsafeBufferPointer<UInt8> {
+    /// Whether `bytes` appear in the buffer one after another
+    fileprivate func contains(bytes: [UInt8]) -> Bool {
+        guard let first = bytes.first, bytes.count <= count else {
+            return false
+        }
+        return (0...(count - bytes.count)).contains { start in
+            self[start] == first && self[start..<(start + bytes.count)].elementsEqual(bytes)
+        }
     }
 }

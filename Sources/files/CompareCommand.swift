@@ -52,6 +52,13 @@ extension Files {
         )
         var sizeTolerance: Double?
 
+        @Option(
+            name: .long,
+            help:
+                "How many files to read and compare at once, at least 1 (default: \(defaultConcurrentReads)). Raise it for network volumes"
+        )
+        var concurrentReads: Int?
+
         @Flag(
             name: .customLong("ignore"), inversion: .prefixedNo,
             help: "Apply .filesignore patterns (default: on)")
@@ -59,6 +66,12 @@ extension Files {
 
         @Flag(name: .long, help: "Disable .files configuration loading")
         var noConfig: Bool = false
+
+        func validate() throws {
+            if let concurrentReads, concurrentReads < 1 {
+                throw ValidationError("--concurrent-reads must be at least 1")
+            }
+        }
 
         mutating func run() async throws {
             let config =
@@ -73,6 +86,8 @@ extension Files {
                 format ?? config.format.flatMap { OutputFormat(rawValue: $0) } ?? .text
             let matchPrecision = matchPrecision ?? config.matchPrecision ?? 1.0
             let sizeTolerance = sizeTolerance ?? config.sizeTolerance ?? 0.0
+            let concurrentReads =
+                concurrentReads ?? config.concurrentReads ?? defaultConcurrentReads
             let noIgnore = useIgnore.map { !$0 } ?? config.noIgnore ?? false
 
             let ignore =
@@ -91,7 +106,8 @@ extension Files {
                 recursive: recursive,
                 ignore: ignore,
                 matchPrecision: matchPrecision,
-                sizeTolerance: sizeTolerance
+                sizeTolerance: sizeTolerance,
+                concurrentReads: concurrentReads
             )
 
             switch diffResult {

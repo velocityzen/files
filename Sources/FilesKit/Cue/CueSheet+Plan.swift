@@ -20,27 +20,35 @@ extension CueSheet {
         guard !tracks.isEmpty else {
             return .failure(.noTracks)
         }
+        // The tracks of one FILE share its audio, so each file is looked for once
+        var sources: [Int: AudioSource] = [:]
+        func source(ofFile file: Int) -> Result<AudioSource, CueSheetError> {
+            if let source = sources[file] {
+                return .success(source)
+            }
+            return AudioSource.resolve(files[file], cuePath: cuePath, isOnlyFile: files.count == 1)
+                .tap { sources[file] = $0 }
+        }
+
         return Array(tracks.indices)
-            .traverse { span(ofTrackAt: $0, cuePath: cuePath) }
+            .traverse { span(ofTrackAt: $0, source: source(ofFile:)) }
             .map(namedTracks)
     }
 
-    private func span(ofTrackAt index: Int, cuePath: String) -> Result<TrackSpan, CueSheetError> {
+    private func span(
+        ofTrackAt index: Int, source: (Int) -> Result<AudioSource, CueSheetError>
+    ) -> Result<TrackSpan, CueSheetError> {
         let track = tracks[index]
         return Result.fromOptional(
             track.start, error: CueSheetError.missingStart(track: track.number)
         )
-        .bind { start in source(ofFile: start.file, cuePath: cuePath) }
+        .bind { start in source(start.file) }
         .bind { start, _ in end(ofTrackAt: index, startingAt: start) }
         .map { start, source, end in
             TrackSpan(
                 track: track, source: source, start: startTime(ofTrackAt: index, start),
                 end: end)
         }
-    }
-
-    private func source(ofFile file: Int, cuePath: String) -> Result<AudioSource, CueSheetError> {
-        AudioSource.resolve(files[file], cuePath: cuePath, isOnlyFile: files.count == 1)
     }
 
     /// The first track of each file starts at the beginning of the file

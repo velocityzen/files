@@ -219,6 +219,22 @@ struct ConfigPrecedenceTests {
         #expect(!TestHelpers.fileExists(at: rightDir.appendingPathComponent("new.txt")))
     }
 
+    @Test("compare, sync and cp reject --concurrent-reads below 1 and accept 1")
+    func concurrentReadsIsValidated() throws {
+        let paths = ["left", "right"]
+        for value in ["0", "-2"] {
+            let arguments = paths + ["--concurrent-reads", value]
+            #expect(throws: (any Error).self) { try Files.CompareCommand.parse(arguments) }
+            #expect(throws: (any Error).self) { try Files.SyncCommand.parse(arguments) }
+            #expect(throws: (any Error).self) { try Files.CopyCommand.parse(arguments) }
+        }
+
+        let one = paths + ["--concurrent-reads", "1"]
+        #expect(try Files.CompareCommand.parse(one).concurrentReads == 1)
+        #expect(try Files.SyncCommand.parse(one).concurrentReads == 1)
+        #expect(try Files.CopyCommand.parse(one).concurrentReads == 1)
+    }
+
     @Test("cp: source .files cannot disable ignore patterns")
     func copySourceConfigCannotDisableIgnore() async throws {
         let leftDir = try TestHelpers.createTestDirectory(files: [

@@ -4,6 +4,7 @@ import Foundation
 public struct Config: Sendable, CustomStringConvertible {
     public var matchPrecision: Double?
     public var sizeTolerance: Double?
+    public var concurrentReads: Int?
     public var recursive: Bool?
     public var deletions: Bool?
     public var showMoreRight: Bool?
@@ -27,6 +28,7 @@ public struct Config: Sendable, CustomStringConvertible {
         var lines: [String] = []
         if let v = matchPrecision { lines.append("  matchPrecision = \(v)") }
         if let v = sizeTolerance { lines.append("  sizeTolerance = \(v)") }
+        if let v = concurrentReads { lines.append("  concurrentReads = \(v)") }
         if let v = recursive { lines.append("  recursive = \(v)") }
         if let v = deletions { lines.append("  deletions = \(v)") }
         if let v = showMoreRight { lines.append("  showMoreRight = \(v)") }
@@ -120,6 +122,7 @@ public struct Config: Sendable, CustomStringConvertible {
         var result = self
         if let v = other.matchPrecision { result.matchPrecision = v }
         if let v = other.sizeTolerance { result.sizeTolerance = v }
+        if let v = other.concurrentReads { result.concurrentReads = v }
         if let v = other.recursive { result.recursive = v }
         if let v = other.deletions { result.deletions = v }
         if let v = other.showMoreRight { result.showMoreRight = v }
@@ -162,6 +165,8 @@ public struct Config: Sendable, CustomStringConvertible {
                         config.matchPrecision = Double(value)
                     case "sizeTolerance":
                         config.sizeTolerance = Double(value)
+                    case "concurrentReads":
+                        config.concurrentReads = Int(value).flatMap { $0 >= 1 ? $0 : nil }
                     case "recursive":
                         config.recursive = parseBool(value)
                     case "deletions":

@@ -121,6 +121,42 @@ struct FileSystemTests {
         #expect(FileSystemError.Reason(unknown) == .other(unknown.localizedDescription))
     }
 
+    @Test("Contents are compared across chunks, to the last byte, and empty files are equal")
+    func contentsEqual() throws {
+        let directory = try TestHelpers.createTestDirectory(files: [:])
+        defer { try? TestHelpers.cleanupTestDirectory(directory) }
+        // Larger than the 256 KB read at a time, and not a multiple of it
+        let bytes = Data((0..<600_001).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        func write(_ name: String, _ data: Data) throws -> String {
+            let file = path(directory, name)
+            try data.write(to: URL(filePath: file))
+            return file
+        }
+        var lastChanged = bytes
+        lastChanged[bytes.count - 1] ^= 1
+        var firstChanged = bytes
+        firstChanged[0] ^= 1
+
+        let original = try write("original", bytes)
+        let copy = try write("copy", bytes)
+        let last = try write("last", lastChanged)
+        let first = try write("first", firstChanged)
+        let shorter = try write("shorter", bytes.dropLast())
+        let empty = try write("empty", Data())
+        let alsoEmpty = try write("also-empty", Data())
+
+        #expect(try fileContentsEqual(original, copy).get())
+        #expect(try !fileContentsEqual(original, last).get())
+        #expect(try !fileContentsEqual(original, first).get())
+        #expect(try !fileContentsEqual(original, shorter).get())
+        #expect(try fileContentsEqual(empty, alsoEmpty).get())
+
+        let missing = path(directory, "missing")
+        #expect(
+            fileContentsEqual(original, missing).error
+                == FileSystemError(operation: .read, path: missing, reason: .notFound))
+    }
+
     private func path(_ directory: URL, _ name: String) -> String {
         directory.appendingPathComponent(name).path(percentEncoded: false)
     }

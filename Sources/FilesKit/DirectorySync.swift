@@ -105,6 +105,7 @@ public enum DirectorySyncError: Error, Sendable, LocalizedError {
 ///   - dryRun: If true, only plan operations without executing them (default: false)
 ///   - ignore: Optional ignore patterns to skip certain files (default: nil, will auto-load from .filesignore files)
 ///   - sizeTolerance: Maximum allowed file size difference ratio for fuzzy-matched files (0.0 to 1.0, default: 0.0)
+///   - concurrentReads: How many pairs of files are read and compared at once, at least 1 (default: `defaultConcurrentReads`)
 /// - Returns: An AsyncStream that yields OperationResult for each completed operation
 /// - Note: If directory validation fails, the stream will yield a single initialization error and finish
 public func directorySync(
@@ -117,7 +118,8 @@ public func directorySync(
     dryRun: Bool = false,
     ignore: Ignore? = nil,
     matchPrecision: Double = 1.0,
-    sizeTolerance: Double = 0.0
+    sizeTolerance: Double = 0.0,
+    concurrentReads: Int = defaultConcurrentReads
 ) async -> AsyncStream<OperationResult> {
     let rightMode: IncludeOnlyInRight =
         switch mode {
@@ -134,7 +136,8 @@ public func directorySync(
         includeOnlyInRight: rightMode,
         ignore: ignore,
         matchPrecision: matchPrecision,
-        sizeTolerance: sizeTolerance
+        sizeTolerance: sizeTolerance,
+        concurrentReads: concurrentReads
     )
 
     let diff: DirectoryDifference
@@ -155,11 +158,15 @@ public func directorySync(
             )
     }
 
+    // Operations hold absolute paths; resolve the bases once and join each relative path
+    let leftBase = absolutePath(leftPath)
+    let rightBase = absolutePath(rightPath)
+
     // Plan sync operations based on mode
     let planResult = await planFileOperations(
         diff: diff,
-        leftPath: leftPath,
-        rightPath: rightPath,
+        leftPath: leftBase,
+        rightPath: rightBase,
         mode: mode,
         deletions: deletions
     )
@@ -187,8 +194,8 @@ public func directorySync(
                 createFileOperation(
                     type: .info,
                     relativePath: $0,
-                    leftBasePath: leftPath,
-                    rightBasePath: rightPath
+                    leftBasePath: leftBase,
+                    rightBasePath: rightBase
                 )
             }
             .sorted { $0.relativePath < $1.relativePath }
@@ -224,31 +231,18 @@ private func planFileOperations(
     }
 }
 
-/// Creates a sync operation by building full paths from base directories and relative path
+/// Creates a sync operation by joining the relative path onto absolute base directories
 private func createFileOperation(
     type: FileOperation.OperationType,
     relativePath: String,
     leftBasePath: String?,
     rightBasePath: String
 ) -> FileOperation {
-    let left: String? =
-        if let leftBasePath {
-            URL(fileURLWithPath: leftBasePath)
-                .appendingPathComponent(relativePath)
-                .path(percentEncoded: false)
-        } else {
-            nil
-        }
-
-    let right = URL(fileURLWithPath: rightBasePath)
-        .appendingPathComponent(relativePath)
-        .path(percentEncoded: false)
-
-    return FileOperation(
+    FileOperation(
         type: type,
         relativePath: relativePath,
-        left: left,
-        right: right
+        left: leftBasePath.map { joinPath($0, relativePath) },
+        right: joinPath(rightBasePath, relativePath)
     )
 }
 
@@ -349,12 +343,8 @@ private func resolveModifiedFiles(
     var operations: [FileOperation] = []
 
     for relativePath in diff.modified {
-        let leftFile = URL(fileURLWithPath: leftPath)
-            .appendingPathComponent(relativePath)
-            .path(percentEncoded: false)
-        let rightFile = URL(fileURLWithPath: rightPath)
-            .appendingPathComponent(diff.rightPath(for: relativePath))
-            .path(percentEncoded: false)
+        let leftFile = joinPath(leftPath, relativePath)
+        let rightFile = joinPath(rightPath, diff.rightPath(for: relativePath))
 
         let result = await resolveConflict(
             relativePath: relativePath,

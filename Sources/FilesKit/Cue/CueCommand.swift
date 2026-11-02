@@ -25,7 +25,7 @@ struct CueLine: Equatable {
 extension CueLine {
     /// The command on a line, or nil for a line that doesn't affect the sheet: CATALOG,
     /// FLAGS, PREGAP, POSTGAP, CDTEXTFILE, other REM fields, and unknown keywords
-    static func parse(_ line: String, number: Int) -> Result<CueLine?, CueSheetError> {
+    static func parse(_ line: Substring, number: Int) -> Result<CueLine?, CueSheetError> {
         let (keyword, rest) = splitKeyword(line)
         return command(keyword, rest, line: number)
             .map { $0.map { CueLine(number: number, command: $0) } }
@@ -88,22 +88,22 @@ extension CueLine {
 
     /// A value that may be quoted; unquoted values run to the end of the line
     private static func value(_ text: Substring) -> String {
-        let text = text.trimmingCharacters(in: .whitespaces)
+        let text = text.trimmingWhitespace()
         guard text.hasPrefix("\""), let close = text.dropFirst().firstIndex(of: "\"") else {
-            return text
+            return String(text)
         }
         return String(text[text.index(after: text.startIndex)..<close])
     }
 
     /// The file name of a FILE line, without its trailing type (WAVE, MP3, ...)
     private static func fileName(_ text: Substring) -> String {
-        let text = text.trimmingCharacters(in: .whitespaces)
+        let text = text.trimmingWhitespace()
         if text.hasPrefix("\"") {
-            return value(Substring(text))
+            return value(text)
         }
         guard let space = text.lastIndex(where: \.isWhitespace) else {
-            return text
+            return String(text)
         }
-        return text[..<space].trimmingCharacters(in: .whitespaces)
+        return String(text[..<space].trimmingWhitespace())
     }
 }

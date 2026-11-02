@@ -27,6 +27,14 @@ func temporaryFile(nextTo destination: String) -> Bracket<String, FileSystemErro
     )
 }
 
+/// A file opened for reading, closed when the scope ends
+func openForReading(_ path: String) -> Bracket<OpenFile, FileSystemError> {
+    Bracket(
+        acquire: { openFileDescriptor(forReadingAt: path) },
+        dispose: closeFileDescriptor
+    )
+}
+
 /// Cleanup is best effort: a failed removal must not replace the outcome of the scope
 private func discardingFailure(
     _ cleanup: @escaping (String) -> Result<Void, FileSystemError>

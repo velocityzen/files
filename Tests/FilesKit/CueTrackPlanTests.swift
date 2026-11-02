@@ -131,6 +131,15 @@ struct CueTrackPlanTests {
             try missing.sheet.plan(cuePath: missing.cuePath).get()
         }
 
+        // Each FILE is looked for, not only the first
+        let secondMissing = try writeAlbum(
+            "FILE \"a.wav\" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\nFILE \"b.wav\" WAVE\nTRACK 02 AUDIO\nINDEX 01 00:00:00",
+            audio: ["a.wav"])
+        defer { try? FileManager.default.removeItem(at: secondMissing.directory) }
+        #expect(throws: CueSheetError.missingAudioFile("b.wav")) {
+            try secondMissing.sheet.plan(cuePath: secondMissing.cuePath).get()
+        }
+
         let mp3 = try writeAlbum(
             "FILE \"a.mp3\" MP3\nTRACK 01 AUDIO\nINDEX 01 00:00:00", audio: ["a.mp3"])
         defer { try? FileManager.default.removeItem(at: mp3.directory) }

@@ -16,8 +16,11 @@ struct AudioSource: Sendable, Equatable {
     static func resolve(_ name: String, cuePath: String, isOnlyFile: Bool) -> Result<
         AudioSource, CueSheetError
     > {
-        let found = candidates(for: name, cuePath: cuePath, isOnlyFile: isOnlyFile)
-            .first(where: regularFileExists(at:))
+        // The renamed paths are only built when no exact one exists, which is rare
+        let candidates = candidates(for: name, cuePath: cuePath, isOnlyFile: isOnlyFile)
+        let found =
+            candidates.exact.first(where: regularFileExists(at:))
+            ?? candidates.renamed.first(where: regularFileExists(at:))
         return Result.fromOptional(found, error: CueSheetError.missingAudioFile(name))
             .flatMap(make)
     }
@@ -40,7 +43,7 @@ struct AudioSource: Sendable, Equatable {
     /// sheet was written, so the same name with another audio extension also counts. Cue
     /// sheets written on Windows can hold backslashes and absolute paths.
     private static func candidates(for name: String, cuePath: String, isOnlyFile: Bool)
-        -> [String]
+        -> (exact: [String], renamed: some Sequence<String>)
     {
         let directory = (cuePath as NSString).deletingLastPathComponent
         let name = name.replacing("\\", with: "/")
@@ -51,10 +54,11 @@ struct AudioSource: Sendable, Equatable {
             ? [((cuePath as NSString).lastPathComponent as NSString).deletingPathExtension] : []
 
         let exact = named.map { (directory as NSString).appendingPathComponent($0) }
-        let stems = (named + cueNamed).map {
-            ((directory as NSString).appendingPathComponent($0) as NSString)
-                .deletingPathExtension
-        }
-        return exact + stems.flatMap { stem in extensions.map { "\(stem).\($0)" } }
+        let renamed = (named + cueNamed).lazy
+            .map { ((directory as NSString).appendingPathComponent($0) as NSString) }
+            .flatMap { path in
+                extensions.lazy.map { "\(path.deletingPathExtension).\($0)" }
+            }
+        return (exact, renamed)
     }
 }

@@ -165,6 +165,7 @@ deletions = false
 |-----|------|-------------|
 | `matchPrecision` | `0.0–1.0` | Fuzzy filename matching threshold |
 | `sizeTolerance` | `0.0–1.0` | File size difference tolerance for fuzzy matches |
+| `concurrentReads` | `1` or more | How many files to read and compare at once (default: 4) |
 | `recursive` | `true/false` | Scan subdirectories recursively |
 | `deletions` | `true/false` | Delete files not in source (one-way sync) |
 | `showMoreRight` | `true/false` | Show additional right-side diff info |
@@ -228,6 +229,7 @@ files <left-directory> <right-directory> [options]
 - `--recursive` / `--no-recursive` - Scan subdirectories recursively (default: recursive)
 - `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching). Lower values enable matching files with similar names using Levenshtein distance
 - `--size-tolerance TOLERANCE` - File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)
+- `--concurrent-reads N` - How many files to read and compare at once, at least 1 (default: 4). Raise it for network volumes; see [Comparing on network volumes](#comparing-on-network-volumes)
 - `--verbose`, `-v` - Show detailed output with all file paths
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
 - `--no-ignore` - Disable .filesignore pattern matching
@@ -256,6 +258,7 @@ This is a convenience command equivalent to `files sync --no-deletions` with one
 - `--show-more-right` - Scan leaf directories on the right side for additional diff information
 - `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching)
 - `--size-tolerance TOLERANCE` - File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)
+- `--concurrent-reads N` - How many files to read and compare at once, at least 1 (default: 4). Raise it for network volumes; see [Comparing on network volumes](#comparing-on-network-volumes)
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
@@ -289,6 +292,7 @@ files sync <source-directory> <destination-directory> [options]
 - `--show-more-right` - Scan leaf directories on the right side for additional diff information (one-way sync without deletions only)
 - `--match-precision THRESHOLD` - Fuzzy filename matching threshold from 0.0 to 1.0 (default: 1.0 for exact matching). Lower values enable matching files with similar names using Levenshtein distance
 - `--size-tolerance TOLERANCE` - File size difference tolerance for fuzzy matches from 0.0 to 1.0 (default: 0.0 for exact comparison)
+- `--concurrent-reads N` - How many files to read and compare at once, at least 1 (default: 4). Raise it for network volumes; see [Comparing on network volumes](#comparing-on-network-volumes)
 - `--dry-run` - Preview changes without applying them
 - `--verbose`, `-v` - Show detailed output with all operations
 - `--format FORMAT` - Output format: `text` (default), `json`, `summary`
@@ -442,6 +446,20 @@ files /dir1 /dir2 --match-precision 0.9
 ```
 
 Only files with very similar names will match (e.g., "file1.txt" and "file2.txt" won't match, but "report.txt" and "reprot.txt" will).
+
+## Comparing on Network Volumes
+
+Comparing reads every file that exists on both sides, a few at a time: 4 by default. That suits a local SSD, where opening files contends in the kernel and reading more at once only uses more CPU. On a network volume each read waits on the server instead, so reading more files at once can be much faster:
+
+```bash
+files sync ~/Photos /Volumes/NAS/Photos --concurrent-reads 16
+```
+
+To use it every time, put it in the `.files` of the folder on that volume:
+
+```
+concurrentReads = 16
+```
 
 ## Examples
 
@@ -773,6 +791,14 @@ swift build -c release \
   -Xswiftc -O \
   -Xswiftc -whole-module-optimization \
   -Xswiftc -cross-module-optimization
+```
+
+# Benchmarks
+
+FilesKit's directory comparison, sync planning, ignore matching and cue pipeline have performance benchmarks in [Benchmarks](Benchmarks/README.md), run from that directory:
+
+```bash
+swift package --allow-writing-to-package-directory benchmark
 ```
 
 # Installation

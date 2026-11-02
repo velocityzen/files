@@ -231,6 +231,42 @@ struct DirectoryDifferenceTests {
         #expect(diff.common.contains("same.txt"))
     }
 
+    @Test(
+        "Every read limit finds the same files in every mode; below 1 reads one at a time",
+        arguments: [-1, 0, 1, 3, 64])
+    func readLimits(concurrentReads: Int) async throws {
+        // More pairs than most limits; the changed files keep their size, so their contents
+        // are read
+        let names = (0..<10).map { "file\($0).txt" }
+        let leftFiles = Dictionary(uniqueKeysWithValues: names.map { ($0, "same \($0)") })
+        var rightFiles = leftFiles
+        rightFiles["file2.txt"] = "SAME file2.txt"
+        rightFiles["file7.txt"] = "SAME file7.txt"
+        rightFiles["file9.txt"] = nil
+
+        let leftDir = try TestHelpers.createTestDirectory(files: leftFiles)
+        let rightDir = try TestHelpers.createTestDirectory(files: rightFiles)
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        for mode in [IncludeOnlyInRight.all, .none, .leafFoldersOnly] {
+            let diff = try await directoryDifference(
+                left: leftDir.path(percentEncoded: false),
+                right: rightDir.path(percentEncoded: false),
+                includeOnlyInRight: mode,
+                ignore: Ignore(),
+                concurrentReads: concurrentReads
+            ).unwrap()
+
+            #expect(diff.modified == ["file2.txt", "file7.txt"])
+            #expect(diff.onlyInLeft == ["file9.txt"])
+            #expect(diff.common == Set(names).subtracting(["file2.txt", "file7.txt", "file9.txt"]))
+        }
+    }
+
     @Test("Modified files detected by size difference")
     func modifiedFilesDetectedBySize() async throws {
         let leftFiles = [

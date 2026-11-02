@@ -102,6 +102,7 @@ struct ConfigTests {
         let configContent = """
             matchPrecision = 0.7
             sizeTolerance = 0.3
+            concurrentReads = 16
             recursive = false
             deletions = true
             showMoreRight = true
@@ -131,6 +132,7 @@ struct ConfigTests {
 
         #expect(config.matchPrecision == 0.7)
         #expect(config.sizeTolerance == 0.3)
+        #expect(config.concurrentReads == 16)
         #expect(config.recursive == false)
         #expect(config.deletions == true)
         #expect(config.showMoreRight == true)
@@ -179,6 +181,7 @@ struct ConfigTests {
             recursive = maybe
             unknownKey = value
             sizeTolerance = 0.5
+            concurrentReads = 0
             """
 
         let leftFiles = [".files": configContent]
@@ -200,6 +203,8 @@ struct ConfigTests {
         #expect(config.matchPrecision == nil)
         #expect(config.recursive == nil)
         #expect(config.sizeTolerance == 0.5)
+        // Reading nothing at once would skip every comparison
+        #expect(config.concurrentReads == nil)
     }
 
     @Test("No .files files returns empty config")

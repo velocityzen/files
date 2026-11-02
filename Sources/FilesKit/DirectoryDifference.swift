@@ -1,3 +1,4 @@
+import FP
 import Foundation
 
 /// Represents the differences between two directories
@@ -126,6 +127,9 @@ public enum IncludeOnlyInRight: Sendable {
 ///   - sizeTolerance: Maximum allowed file size difference ratio for fuzzy-matched files (0.0 to 1.0, default: 0.0).
 ///                    Only applies to fuzzy-matched pairs. 0.0 means exact content comparison.
 ///                    Higher values allow more size difference (e.g., 0.2 allows 20% size difference).
+///   - concurrentReads: How many pairs of files are read and compared at once; below 1 counts
+///                      as 1 (default: `defaultConcurrentReads`). Raise it for volumes where
+///                      each read waits on the network.
 /// - Returns: A `Result` containing either the `DirectoryDifference` or a `DirectoryDifferenceError`
 public func directoryDifference(
     left leftPath: String,
@@ -134,8 +138,12 @@ public func directoryDifference(
     includeOnlyInRight: IncludeOnlyInRight = .all,
     ignore: Ignore? = nil,
     matchPrecision: Double = 1.0,
-    sizeTolerance: Double = 0.0
+    sizeTolerance: Double = 0.0,
+    concurrentReads: Int = defaultConcurrentReads
 ) async -> Result<DirectoryDifference, DirectoryDifferenceError> {
+    // A concurrent traverse needs at least one transform in flight
+    let concurrentReads = max(1, concurrentReads)
+
     if case .failure(let error) = validateDirectories(leftPath: leftPath, rightPath: rightPath) {
         return .failure(error)
     }
@@ -165,7 +173,8 @@ public func directoryDifference(
                         recursive: recursive,
                         ignore: patterns,
                         matchPrecision: matchPrecision,
-                        sizeTolerance: sizeTolerance
+                        sizeTolerance: sizeTolerance,
+                        concurrentReads: concurrentReads
                     )
                 case .none:
                     try await optimizedComparison(
@@ -175,7 +184,8 @@ public func directoryDifference(
                         recursive: recursive,
                         ignore: patterns,
                         matchPrecision: matchPrecision,
-                        sizeTolerance: sizeTolerance
+                        sizeTolerance: sizeTolerance,
+                        concurrentReads: concurrentReads
                     )
                 case .leafFoldersOnly:
                     try await leafFoldersComparison(
@@ -184,7 +194,8 @@ public func directoryDifference(
                         filesLeft: filesLeft,
                         ignore: patterns,
                         matchPrecision: matchPrecision,
-                        sizeTolerance: sizeTolerance
+                        sizeTolerance: sizeTolerance,
+                        concurrentReads: concurrentReads
                     )
             }
         return .success(diff)
@@ -217,7 +228,8 @@ private func fullComparison(
     recursive: Bool,
     ignore: Ignore,
     matchPrecision: Double,
-    sizeTolerance: Double
+    sizeTolerance: Double,
+    concurrentReads: Int
 ) async throws -> DirectoryDifference {
     let filesRight = try await scanDirectory(
         at: rightPath, recursive: recursive, ignore: ignore)
@@ -227,7 +239,8 @@ private func fullComparison(
             leftPath: leftPath,
             rightPath: rightPath,
             filesLeft: filesLeft,
-            filesRight: filesRight
+            filesRight: filesRight,
+            concurrentReads: concurrentReads
         )
     }
 
@@ -237,7 +250,8 @@ private func fullComparison(
         filesLeft: filesLeft,
         filesRight: filesRight,
         matchPrecision: matchPrecision,
-        sizeTolerance: sizeTolerance
+        sizeTolerance: sizeTolerance,
+        concurrentReads: concurrentReads
     )
 }
 
@@ -247,7 +261,8 @@ private func exactComparison(
     leftPath: String,
     rightPath: String,
     filesLeft: Set<String>,
-    filesRight: Set<String>
+    filesRight: Set<String>,
+    concurrentReads: Int
 ) async throws -> DirectoryDifference {
     let onlyInLeft = filesLeft.subtracting(filesRight)
     let onlyInRight = filesRight.subtracting(filesLeft)
@@ -256,7 +271,8 @@ private func exactComparison(
     let modified = try await findModifiedFiles(
         common: common,
         leftPath: leftPath,
-        rightPath: rightPath
+        rightPath: rightPath,
+        concurrentReads: concurrentReads
     )
 
     return DirectoryDifference(
@@ -275,7 +291,8 @@ private func fuzzyComparison(
     filesLeft: Set<String>,
     filesRight: Set<String>,
     matchPrecision: Double,
-    sizeTolerance: Double
+    sizeTolerance: Double,
+    concurrentReads: Int
 ) async throws -> DirectoryDifference {
     let exactCommon = filesLeft.intersection(filesRight)
     let unmatchedLeft = filesLeft.subtracting(filesRight)
@@ -290,7 +307,8 @@ private func fuzzyComparison(
     let exactModified = try await findModifiedFiles(
         common: exactCommon,
         leftPath: leftPath,
-        rightPath: rightPath
+        rightPath: rightPath,
+        concurrentReads: concurrentReads
     )
     let fuzzy = try await classifyFuzzyMatches(
         fuzzyMatches,
@@ -317,23 +335,21 @@ private func classifyFuzzyMatches(
     rightPath: String,
     sizeTolerance: Double
 ) async throws -> (common: Set<String>, modified: Set<String>) {
+    let leftBase = absolutePath(leftPath)
+    let rightBase = absolutePath(rightPath)
     var common = Set<String>()
     var modified = Set<String>()
 
     for (leftFile, rightFile) in fuzzyMatches {
-        let leftFullPath = URL(fileURLWithPath: leftPath)
-            .appendingPathComponent(leftFile)
-            .path(percentEncoded: false)
-        let rightFullPath = URL(fileURLWithPath: rightPath)
-            .appendingPathComponent(rightFile)
-            .path(percentEncoded: false)
+        let leftFullPath = joinPath(leftBase, leftFile)
+        let rightFullPath = joinPath(rightBase, rightFile)
 
         let isDifferent =
             if sizeTolerance > 0 {
-                try await !filesAreSimilarSize(
-                    leftFullPath, rightFullPath, tolerance: sizeTolerance)
+                try !filesAreSimilarSize(leftFullPath, rightFullPath, tolerance: sizeTolerance)
+                    .get()
             } else {
-                try await filesAreDifferent(leftFullPath, rightFullPath)
+                try filesAreDifferent(leftFullPath, rightFullPath).get()
             }
 
         if isDifferent {
@@ -355,14 +371,16 @@ private func optimizedComparison(
     recursive: Bool,
     ignore: Ignore,
     matchPrecision: Double,
-    sizeTolerance: Double
+    sizeTolerance: Double,
+    concurrentReads: Int
 ) async throws -> DirectoryDifference {
     // If matchPrecision is 1.0, use exact matching
     if matchPrecision >= 1.0 {
         let (common, modified) = try await checkLeftFilesInRight(
             leftFiles: filesLeft,
             leftPath: leftPath,
-            rightPath: rightPath
+            rightPath: rightPath,
+            concurrentReads: concurrentReads
         )
 
         return DirectoryDifference(
@@ -391,7 +409,8 @@ private func optimizedComparison(
     let exactModified = try await findModifiedFiles(
         common: exactCommon,
         leftPath: leftPath,
-        rightPath: rightPath
+        rightPath: rightPath,
+        concurrentReads: concurrentReads
     )
     let fuzzy = try await classifyFuzzyMatches(
         fuzzyMatches,
@@ -417,7 +436,8 @@ private func leafFoldersComparison(
     filesLeft: Set<String>,
     ignore: Ignore,
     matchPrecision: Double,
-    sizeTolerance: Double
+    sizeTolerance: Double,
+    concurrentReads: Int
 ) async throws -> DirectoryDifference {
     // Derive leaf directories from the files we already scanned
     let leftLeafDirs = findLeafDirectoriesFromFiles(filesLeft)
@@ -433,7 +453,8 @@ private func leafFoldersComparison(
         let (common, modified) = try await checkLeftFilesInRight(
             leftFiles: filesLeft,
             leftPath: leftPath,
-            rightPath: rightPath
+            rightPath: rightPath,
+            concurrentReads: concurrentReads
         )
 
         // Calculate what's only in right (within left's leaf directories)
@@ -444,7 +465,8 @@ private func leafFoldersComparison(
         let modifiedInLeaves = try await findModifiedFiles(
             common: commonInLeaves,
             leftPath: leftPath,
-            rightPath: rightPath
+            rightPath: rightPath,
+            concurrentReads: concurrentReads
         )
 
         return DirectoryDifference(
@@ -469,7 +491,8 @@ private func leafFoldersComparison(
     let exactModified = try await findModifiedFiles(
         common: exactCommon,
         leftPath: leftPath,
-        rightPath: rightPath
+        rightPath: rightPath,
+        concurrentReads: concurrentReads
     )
     let fuzzy = try await classifyFuzzyMatches(
         fuzzyMatches,
@@ -493,43 +516,36 @@ private func leafFoldersComparison(
 private func checkLeftFilesInRight(
     leftFiles: Set<String>,
     leftPath: String,
-    rightPath: String
+    rightPath: String,
+    concurrentReads: Int
 ) async throws -> (common: Set<String>, modified: Set<String>) {
-    try await withThrowingTaskGroup(of: (String, FileStatus).self) { group in
-        for relativePath in leftFiles {
-            group.addTask {
-                let fileLeft = URL(fileURLWithPath: leftPath)
-                    .appendingPathComponent(relativePath)
-                    .path(percentEncoded: false)
-                let fileRight = URL(fileURLWithPath: rightPath)
-                    .appendingPathComponent(relativePath)
-                    .path(percentEncoded: false)
-
-                guard fileExists(at: fileRight) else {
-                    return (relativePath, .onlyInLeft)
-                }
-
-                let isDifferent = try await filesAreDifferent(fileLeft, fileRight)
-                return (relativePath, isDifferent ? .modified : .same)
-            }
+    let leftBase = absolutePath(leftPath)
+    let rightBase = absolutePath(rightPath)
+    let statuses = try await Array(leftFiles).traverseAsync(concurrency: concurrentReads) {
+        relativePath -> Result<(String, FileStatus), FileSystemError> in
+        let fileRight = joinPath(rightBase, relativePath)
+        guard fileExists(at: fileRight) else {
+            return .success((relativePath, .onlyInLeft))
         }
 
-        var common = Set<String>()
-        var modified = Set<String>()
-
-        for try await (file, status) in group {
-            switch status {
-                case .same:
-                    common.insert(file)
-                case .modified:
-                    modified.insert(file)
-                case .onlyInLeft:
-                    break  // Will be in onlyInLeft by subtraction
-            }
-        }
-
-        return (common, modified)
+        return filesAreDifferent(joinPath(leftBase, relativePath), fileRight)
+            .map { isDifferent in (relativePath, isDifferent ? .modified : .same) }
     }
+    .get()
+
+    var common = Set<String>()
+    var modified = Set<String>()
+    for (file, status) in statuses {
+        switch status {
+            case .same:
+                common.insert(file)
+            case .modified:
+                modified.insert(file)
+            case .onlyInLeft:
+                break  // Will be in onlyInLeft by subtraction
+        }
+    }
+    return (common, modified)
 }
 
 private enum FileStatus {
@@ -578,7 +594,7 @@ private func scanLeafDirectories(
 ) async throws -> Set<String> {
     try await Task.detached {
         let baseURL = URL(fileURLWithPath: path)
-        let basePath = standardizedPath(of: baseURL)
+        let root = ScanRoot(baseURL)
 
         var files = Set<String>()
 
@@ -602,7 +618,7 @@ private func scanLeafDirectories(
                     continue
                 }
 
-                let relativePath = relativeFilePath(of: fileURL, basePath: basePath)
+                let relativePath = root.relativePath(of: fileURL)
                 if !ignore.shouldIgnore(relativePath, isDirectory: false) {
                     files.insert(relativePath)
                 }
@@ -629,12 +645,12 @@ private func scanDirectory(at path: String, recursive: Bool, ignore: Ignore)
         .mapError { _ in DirectoryDifferenceError.accessDenied(path) }
         .get()
 
-        let basePath = standardizedPath(of: baseURL)
+        let root = ScanRoot(baseURL)
         var files = Set<String>()
 
         while let fileURL = enumerator.nextObject() as? URL {
             let resourceValues = try fileURL.resourceValues(forKeys: [.isDirectoryKey])
-            let relativePath = relativeFilePath(of: fileURL, basePath: basePath)
+            let relativePath = root.relativePath(of: fileURL)
 
             if resourceValues.isDirectory == true {
                 // Like .gitignore, an ignored directory hides everything inside it,
@@ -660,13 +676,37 @@ private func standardizedPath(of url: URL) -> String {
     return path
 }
 
-/// Path of an enumerated URL relative to the standardized base path
-private func relativeFilePath(of url: URL, basePath: String) -> String {
-    let path = standardizedPath(of: url)
-    if path.hasPrefix(basePath + "/") {
-        return String(path.dropFirst(basePath.count + 1))
+/// The directory a scan starts from, for finding the relative paths of what it enumerates
+private struct ScanRoot {
+    /// How enumerated paths may start, each ending in a slash: the directory's canonical
+    /// path, which the enumerator on macOS builds its URLs from, then the path it was given
+    let prefixes: [String]
+    let standardizedPath: String
+
+    init(_ url: URL) {
+        let path = url.path(percentEncoded: false)
+        self.prefixes = [canonicalPath(path), path].compactMap(\.self)
+            .map { $0.hasSuffix("/") ? $0 : $0 + "/" }
+        self.standardizedPath = FilesKit.standardizedPath(of: url)
     }
-    return url.lastPathComponent
+
+    /// Path of an enumerated URL relative to the root. The root is cut off as text;
+    /// standardizing each URL checks the disk twice, and is only the fallback for a URL that
+    /// starts with neither prefix.
+    func relativePath(of url: URL) -> String {
+        let path = url.path(percentEncoded: false)
+        if let prefix = prefixes.first(where: path.hasPrefix) {
+            // Directory URLs end in a slash, which standardizing drops
+            let relative = path.dropFirst(prefix.count)
+            return String(relative.hasSuffix("/") ? relative.dropLast() : relative)
+        }
+
+        let standardized = FilesKit.standardizedPath(of: url)
+        if standardized.hasPrefix(standardizedPath + "/") {
+            return String(standardized.dropFirst(standardizedPath.count + 1))
+        }
+        return url.lastPathComponent
+    }
 }
 
 /// Finds files that exist in both directories but have different content
@@ -674,67 +714,57 @@ private func relativeFilePath(of url: URL, basePath: String) -> String {
 private func findModifiedFiles(
     common: Set<String>,
     leftPath: String,
-    rightPath: String
+    rightPath: String,
+    concurrentReads: Int
 ) async throws -> Set<String> {
-    try await withThrowingTaskGroup(of: String?.self) { group in
-        for relativePath in common {
-            group.addTask {
-                let fileLeft = URL(fileURLWithPath: leftPath)
-                    .appendingPathComponent(relativePath)
-                    .path(percentEncoded: false)
-                let fileRight = URL(fileURLWithPath: rightPath)
-                    .appendingPathComponent(relativePath)
-                    .path(percentEncoded: false)
-
-                return try await filesAreDifferent(fileLeft, fileRight) ? relativePath : nil
-            }
-        }
-
-        var modified = Set<String>()
-        for try await modifiedFile in group {
-            if let file = modifiedFile {
-                modified.insert(file)
-            }
-        }
-        return modified
+    let leftBase = absolutePath(leftPath)
+    let rightBase = absolutePath(rightPath)
+    let modified = try await Array(common).traverseAsync(concurrency: concurrentReads) {
+        relativePath in
+        filesAreDifferent(joinPath(leftBase, relativePath), joinPath(rightBase, relativePath))
+            .map { isDifferent in isDifferent ? relativePath : nil }
     }
+    .get()
+    return Set(modified.compactMap(\.self))
 }
 
-/// Compares two files to determine if they have different content
-@concurrent
-private func filesAreDifferent(_ path1: String, _ path2: String) async throws -> Bool {
-    try await Task.detached {
-        // First compare file sizes for quick check
-        if try fileAttributes(at: path1).get().size != fileAttributes(at: path2).get().size {
-            return true
-        }
+/// How many pairs of files are compared at once unless a caller says otherwise. Opening files
+/// is where comparing small files spends its time, and on an SSD opens contend in the kernel:
+/// past a few at once, more threads only burn CPU. On a network volume each open waits on the
+/// server instead, so more at once can be faster there.
+public let defaultConcurrentReads = 4
 
-        // If sizes match, compare content
-        return try fileContents(at: path1).get() != fileContents(at: path2).get()
-    }.value
+/// Compares two files to determine if they have different content. It reads in place, so it
+/// is called from `@concurrent` code, which runs off any actor.
+private func filesAreDifferent(_ path1: String, _ path2: String) -> Result<
+    Bool, FileSystemError
+> {
+    // First compare file sizes for quick check, then content
+    flatten(fileAttributes(at: path1), fileAttributes(at: path2))
+        .flatMap { left, right in
+            left.size != right.size
+                ? .success(true) : fileContentsEqual(path1, path2).map { equal in !equal }
+        }
 }
 
 /// Compares two files to determine if they have similar sizes within a tolerance
-@concurrent
 private func filesAreSimilarSize(
     _ left: String,
     _ right: String,
     tolerance: Double
-) async throws -> Bool {
-    try await Task.detached {
-        let leftSize = try fileAttributes(at: left).get().size
-        let rightSize = try fileAttributes(at: right).get().size
+) -> Result<Bool, FileSystemError> {
+    flatten(fileAttributes(at: left), fileAttributes(at: right))
+        .map { left, right in
+            if left.size == 0 && right.size == 0 {
+                return true
+            }
 
-        if leftSize == 0 && rightSize == 0 {
-            return true
+            let minSize = min(left.size, right.size)
+            let allowedDifference = Double(minSize) * tolerance
+            let actualDifference = abs(Double(left.size) - Double(right.size))
+
+            return actualDifference <= allowedDifference
         }
-
-        let minSize = min(leftSize, rightSize)
-        let allowedDifference = Double(minSize) * tolerance
-        let actualDifference = abs(Double(leftSize) - Double(rightSize))
-
-        return actualDifference <= allowedDifference
-    }.value
 }
 
 // MARK: - JSON Comparison
@@ -870,7 +900,8 @@ internal func findFuzzyMatches(
 
     var candidates: [(left: Int, right: Int, similarity: Double, sameDirectory: Bool)] = []
     for (leftIndex, leftFile) in left.enumerated() {
-        for (rightIndex, rightFile) in right.enumerated() {
+        for (rightIndex, rightFile) in right.enumerated()
+        where maximumSimilarity(leftFile.name.count, rightFile.name.count) >= threshold {
             let similarity = stringSimilarity(leftFile.name, rightFile.name)
             if similarity >= threshold {
                 candidates.append(
@@ -901,10 +932,11 @@ internal func findFuzzyMatches(
     return matches
 }
 
-/// Splits a relative path into its directory and file name
-private func splitPath(_ path: String) -> (path: String, directory: Substring, name: String) {
+/// Splits a relative path into its directory and the characters of its file name, which are
+/// compared with every other name
+private func splitPath(_ path: String) -> (path: String, directory: Substring, name: [Character]) {
     guard let slash = path.lastIndex(of: "/") else {
-        return (path, "", path)
+        return (path, "", Array(path))
     }
-    return (path, path[..<slash], String(path[path.index(after: slash)...]))
+    return (path, path[..<slash], Array(path[path.index(after: slash)...]))
 }

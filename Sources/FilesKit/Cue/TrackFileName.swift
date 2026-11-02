@@ -39,34 +39,51 @@ enum TrackFileName {
         .names
     }
 
+    /// The name itself when it is free, so the numbered names are only built for a repeat
     private static func uniqueName(_ name: String, avoiding used: Set<String>) -> String {
+        guard used.contains(name.lowercased()) else {
+            return name
+        }
         let stem = (name as NSString).deletingPathExtension
         let pathExtension = (name as NSString).pathExtension
-        let numbered = (2...).lazy.map { "\(stem) (\($0)).\(pathExtension)" }
-        return ([name] + numbered.prefix(used.count + 1))
+        // At most used.count numbered names can be taken, so the search always ends
+        return (2...).lazy.map { "\(stem) (\($0)).\(pathExtension)" }
             .first { !used.contains($0.lowercased()) } ?? name
     }
 
     /// Replaces characters that file systems reject or that split paths, then trims what
     /// Finder and Windows strip anyway
     static func sanitized(_ name: String, maxBytes: Int = maxStemBytes) -> String {
-        let trimmed = prefix(String(name.map(safeCharacter)), maxBytes: maxBytes)
-            .trimmingCharacters(in: .whitespaces)
-        let withoutDots = String(trimmed.reversed().drop { $0 == "." }.reversed())
-        return withoutDots.isEmpty ? "_" : withoutDots
+        let trimmed = prefix(String(name.lazy.map(safeCharacter)), maxBytes: maxBytes)
+            .trimmingWhitespace()
+        let end = trimmed.lastIndex { $0 != "." }.map(trimmed.index(after:)) ?? trimmed.startIndex
+        return trimmed[..<end].isEmpty ? "_" : String(trimmed[..<end])
     }
 
     private static func safeCharacter(_ character: Character) -> Character {
-        let isControl = character.unicodeScalars.contains {
-            CharacterSet.controlCharacters.contains($0)
-        }
+        let isControl = character.unicodeScalars.contains(where: isControl)
         return reserved.contains(character) || isControl ? "_" : character
+    }
+
+    /// The characters `CharacterSet.controlCharacters` holds, general categories Cc and Cf,
+    /// checked natively: that property builds a new bridged set on every access
+    private static func isControl(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+            case .control, .format: true
+            default: false
+        }
     }
 
     /// The longest run of whole characters from the start that fits in `maxBytes` of UTF-8
     private static func prefix(_ text: String, maxBytes: Int) -> String {
-        let characterEnds = Array(text.indices.dropFirst()) + [text.endIndex]
-        let end = characterEnds.last { text[..<$0].utf8.count <= maxBytes } ?? text.startIndex
-        return String(text[..<end])
+        guard text.utf8.count > maxBytes else {
+            return text
+        }
+        var bytes = 0
+        return String(
+            text.prefix { character in
+                bytes += character.utf8.count
+                return bytes <= maxBytes
+            })
     }
 }
