@@ -140,6 +140,11 @@ private func contentsEqual(_ left: OpenFile, _ right: OpenFile) -> Result<Bool, 
     return withUnsafeTemporaryAllocation(byteCount: 2 * chunkSize, alignment: 16) { buffer in
         let leftBuffer = UnsafeMutableRawBufferPointer(rebasing: buffer[..<chunkSize])
         let rightBuffer = UnsafeMutableRawBufferPointer(rebasing: buffer[chunkSize...])
+        // A temporary allocation always has an address; Glibc's memcmp takes no nil
+        guard let leftBytes = leftBuffer.baseAddress, let rightBytes = rightBuffer.baseAddress
+        else {
+            return .success(false)
+        }
         while true {
             let counts = left.readChunk(into: leftBuffer).flatMap { leftCount in
                 right.readChunk(into: rightBuffer).map { rightCount in (leftCount, rightCount) }
@@ -148,7 +153,7 @@ private func contentsEqual(_ left: OpenFile, _ right: OpenFile) -> Result<Bool, 
                 return counts.map { _ in false }
             }
             guard leftCount == rightCount,
-                memcmp(leftBuffer.baseAddress, rightBuffer.baseAddress, leftCount) == 0
+                memcmp(leftBytes, rightBytes, leftCount) == 0
             else {
                 return .success(false)
             }
@@ -189,6 +194,13 @@ struct OpenFile {
             }
         }
         return .success(filled)
+    }
+
+    /// Reads up to `count` bytes from the current offset, fewer only at the end of the file
+    func readData(count: Int) -> Result<Data, FileSystemError> {
+        var data = Data(count: count)
+        let read = data.withUnsafeMutableBytes { readChunk(into: $0) }
+        return read.map { count in data.prefix(count) }
     }
 
     /// Moves the offset the next read starts at
@@ -346,11 +358,40 @@ func writeFile(_ data: Data, to path: String, options: Data.WritingOptions = [])
     }
 }
 
-/// Creates a directory and any missing parents; an existing directory is fine
+/// Creates a directory and any missing parents; an existing directory is fine. It is
+/// `mkdir -p` made of POSIX calls, so a failure says why on every platform: Foundation on
+/// Linux reports a file where a parent should be only as an unknown write error.
 func createDirectory(at path: String) -> Result<Void, FileSystemError> {
-    perform(.createDirectory, path: path) {
-        try $0.createDirectory(atPath: path, withIntermediateDirectories: true)
+    if mkdir(path, 0o777) == 0 {
+        return .success(())
     }
+    switch errno {
+        case EEXIST:
+            return existingDirectory(at: path)
+        case ENOENT:
+            let parent = (path as NSString).deletingLastPathComponent
+            guard !parent.isEmpty, parent != path else {
+                return .failure(posixFailure(.createDirectory, path: path))
+            }
+            return createDirectory(at: parent).flatMap { _ in
+                if mkdir(path, 0o777) == 0 {
+                    return .success(())
+                }
+                // Something else may have created it in between
+                return errno == EEXIST
+                    ? existingDirectory(at: path)
+                    : .failure(posixFailure(.createDirectory, path: path))
+            }
+        default:
+            return .failure(posixFailure(.createDirectory, path: path))
+    }
+}
+
+/// Success if what already exists at the path is a directory
+private func existingDirectory(at path: String) -> Result<Void, FileSystemError> {
+    directoryExists(at: path)
+        ? .success(())
+        : .failure(FileSystemError(operation: .createDirectory, path: path, reason: .alreadyExists))
 }
 
 func copyItem(at source: String, to destination: String) -> Result<Void, FileSystemError> {

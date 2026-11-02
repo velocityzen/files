@@ -103,6 +103,40 @@ struct FLACMetadataTests {
         #expect(padded.audioOffset == metadata.audioOffset)
     }
 
+    @Test("Reading from a file stops at the audio, and rejects files cut short or not FLAC")
+    func readingFromFile() throws {
+        let directory = try TestHelpers.createTestDirectory(files: [:])
+        defer { try? TestHelpers.cleanupTestDirectory(directory) }
+        func read(_ data: Data) throws -> Result<FLACMetadata, FLACTagsError> {
+            let path = directory.appendingPathComponent(UUID().uuidString)
+                .path(percentEncoded: false)
+            try data.write(to: URL(filePath: path))
+            let withFile = openForReading(path).mapError(FLACTagsError.fileSystem)
+            return withFile { file in
+                FLACMetadata.read(from: file, path: "a.flac").flatMap { metadata in
+                    // What is left to read is the audio
+                    file.readData(count: 100).mapError(FLACTagsError.fileSystem)
+                        .map { audio in
+                            #expect(audio == Self.audio)
+                            return metadata
+                        }
+                }
+            }
+        }
+
+        let comments = VorbisComments(vendor: "encoder", comments: ["TITLE=One"])
+        let file = flac([Self.streamInfo, (4, comments.encoded), Self.padding])
+        #expect(try read(file) == FLACMetadata.parse(file, path: "a.flac"))
+
+        let metadataSize = try FLACMetadata.parse(file, path: "a.flac").get().audioOffset
+        // Cut inside a block header, inside a block body, and before any block
+        for size in [metadataSize - 18, metadataSize - 1, 4] {
+            #expect(try read(file.prefix(size)) == .failure(.malformed("a.flac")))
+        }
+        #expect(try read(Data("RIFF....".utf8)) == .failure(.notFLAC("a.flac")))
+        #expect(try read(Data("fL".utf8)) == .failure(.notFLAC("a.flac")))
+    }
+
     /// A FLAC file with these metadata blocks followed by fake audio
     private func flac(_ blocks: [(type: UInt8, body: Data)]) -> Data {
         let encoded = blocks.enumerated().map { index, block in

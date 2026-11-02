@@ -55,6 +55,52 @@ struct FLACMetadata: Equatable {
         return Array(located).traverse { $0 }.flatMap { metadata(from: $0, path: path) }
     }
 
+    /// Reads the marker and metadata blocks from the start of an open file, a block header
+    /// at a time, so only the metadata is read however large the audio is
+    static func read(from file: OpenFile, path: String) -> Result<FLACMetadata, FLACTagsError> {
+        file.readData(count: marker.count)
+            .mapError(FLACTagsError.fileSystem)
+            .flatMap { start in
+                guard start == marker else {
+                    return .failure(.notFLAC(path))
+                }
+                return readBlocks(from: file, path: path)
+                    .flatMap { blocks in parse(start + blocks, path: path) }
+            }
+    }
+
+    /// The blocks as they sit in the file, read until the one marked last
+    private static func readBlocks(from file: OpenFile, path: String) -> Result<
+        Data, FLACTagsError
+    > {
+        var blocks = Data()
+        while true {
+            let block = readBlock(from: file, path: path)
+            guard case .success(let (bytes, isLast)) = block else {
+                return block.map { _ in blocks }
+            }
+            blocks += bytes
+            if isLast {
+                return .success(blocks)
+            }
+        }
+    }
+
+    private static func readBlock(from file: OpenFile, path: String) -> Result<
+        (bytes: Data, isLast: Bool), FLACTagsError
+    > {
+        let read: (Int) -> Result<Data, FLACTagsError> = { count in
+            file.readData(count: count).mapError(FLACTagsError.fileSystem).flatMap { data in
+                data.count == count ? .success(data) : .failure(.malformed(path))
+            }
+        }
+        return read(4).flatMap { header in
+            let bytes = Array(header)
+            let length = Int(bytes[1]) << 16 | Int(bytes[2]) << 8 | Int(bytes[3])
+            return read(length).map { body in (header + body, bytes[0] & 0x80 != 0) }
+        }
+    }
+
     private static func block(in data: Data, at offset: Int, path: String) -> Result<
         Located, FLACTagsError
     > {

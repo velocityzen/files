@@ -125,6 +125,8 @@ struct CueSheetTests {
 
     // MARK: - Loading
 
+    // Detecting an encoding is macOS only, like the detection itself
+    #if canImport(Darwin)
     @Test(
         "Detects legacy code pages",
         arguments: [
@@ -143,6 +145,7 @@ struct CueSheetTests {
         #expect(sheet.title == title)
         #expect(sheet.tracks.first?.title == title)
     }
+    #endif
 
     @Test("Reads UTF-8 with a byte order mark, and uses an explicit encoding when given")
     func utf8AndExplicit() throws {

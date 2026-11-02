@@ -9,9 +9,7 @@ enum FLACTags {
     static let rewritePadding = 8 * 1024
 
     static func read(at path: String) -> Result<VorbisComments, FLACTagsError> {
-        contents(of: path)
-            .flatMap { FLACMetadata.parse($0, path: path) }
-            .flatMap { $0.comments(path: path) }
+        metadata(of: path).flatMap { $0.comments(path: path) }
     }
 
     /// Replaces all comments with `fields`, keeping the encoder's vendor string
@@ -22,8 +20,7 @@ enum FLACTags {
     static func write(_ fields: [(key: String, value: String)], to path: String) -> Result<
         Void, FLACTagsError
     > {
-        contents(of: path)
-            .flatMap { FLACMetadata.parse($0, path: path) }
+        metadata(of: path)
             .map { $0.replacingComments(with: fields) }
             .flatMap { metadata in
                 guard let fitted = metadata.fitted(to: metadata.audioOffset) else {
@@ -33,9 +30,11 @@ enum FLACTags {
             }
     }
 
-    /// The file mapped, not read: parsing only touches the metadata at its start
-    private static func contents(of path: String) -> Result<Data, FLACTagsError> {
-        fileContents(at: path, options: .alwaysMapped).mapError(FLACTagsError.fileSystem)
+    /// The metadata at the start of the file, read rather than mapped. The file is written
+    /// over or replaced next, and a mapped file that changes under the process can crash it.
+    private static func metadata(of path: String) -> Result<FLACMetadata, FLACTagsError> {
+        let withFile = openForReading(path).mapError(FLACTagsError.fileSystem)
+        return withFile { FLACMetadata.read(from: $0, path: path) }
     }
 
     private static func writeInPlace(_ header: Data, to path: String) -> Result<
