@@ -329,7 +329,7 @@ files cut <cue-file> [options]
 
 - FLAC, WAV and AIFF are cut with Core Audio and keep their format and bit depth (16, 20 or 24-bit).
 - APE and WavPack need [ffmpeg](https://ffmpeg.org) (`brew install ffmpeg`), which is found on `PATH`, `/opt/homebrew/bin` or `/usr/local/bin`. They are decoded once and written as FLAC.
-- FLAC tracks are tagged with `TITLE`, `ARTIST`, `ALBUM`, `ALBUMARTIST`, `COMPOSER`, `GENRE`, `DATE`, `ISRC`, `TRACKNUMBER`, `TRACKTOTAL`, `DISCNUMBER` and `DISCTOTAL` from the cue sheet. WAV and AIFF tracks are not tagged.
+- FLAC tracks are tagged with `TITLE`, `ARTIST`, `ALBUM`, `ALBUMARTIST`, `COMPOSER`, `GENRE`, `DATE`, `ISRC`, `TRACKNUMBER`, `TRACKTOTAL`, `DISCNUMBER` and `DISCTOTAL` from the cue sheet, with 8 KB of padding after the tags so a tag editor can change them later without rewriting the audio. WAV and AIFF tracks are not tagged.
 - Tracks are named `NN - Title.ext`, or `NN - Performer - Title.ext` when a track's performer differs from the album's.
 
 How tracks are cut:

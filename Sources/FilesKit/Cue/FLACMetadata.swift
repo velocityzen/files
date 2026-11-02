@@ -24,7 +24,10 @@ struct FLACMetadata: Equatable {
 
     static let marker = Data("fLaC".utf8)
     private static let streamInfoType: UInt8 = 0
+    private static let paddingType: UInt8 = 1
     private static let vorbisCommentType: UInt8 = 4
+    /// A block's length is stored in 24 bits
+    private static let maximumBlockLength = 1 << 24
 
     let blocks: [Block]
     let audioOffset: Int
@@ -100,6 +103,34 @@ struct FLACMetadata: Equatable {
             audioOffset: audioOffset)
     }
 
+    /// The same blocks with their padding resized so the marker and blocks take exactly
+    /// `size` bytes, to be written over metadata of that size in place, or nil if they don't
+    /// fit. Padding needs four bytes for its own header, so 1 to 3 spare bytes don't fit
+    /// either, and no more than one block holds.
+    func fitted(to size: Int) -> FLACMetadata? {
+        let spare = size - Self.encodedSize(of: unpadded)
+        if spare == 0 {
+            return FLACMetadata(blocks: unpadded, audioOffset: audioOffset)
+        }
+        return (4..<4 + Self.maximumBlockLength).contains(spare) ? padded(by: spare - 4) : nil
+    }
+
+    /// The same blocks followed by one padding block of `length` bytes, room for later tag
+    /// changes to be written in place
+    func padded(by length: Int) -> FLACMetadata {
+        let padding = Block(type: Self.paddingType, body: Data(count: length))
+        return FLACMetadata(blocks: unpadded + [padding], audioOffset: audioOffset)
+    }
+
+    /// Every block but padding
+    private var unpadded: [Block] {
+        blocks.filter { $0.type != Self.paddingType }
+    }
+
+    private static func encodedSize(of blocks: [Block]) -> Int {
+        blocks.reduce(marker.count) { size, block in size + 4 + block.body.count }
+    }
+
     /// The marker and blocks, ready to be followed by the audio frames
     func encodedHeader(path: String) -> Result<Data, FLACTagsError> {
         Array(blocks.enumerated())
@@ -113,7 +144,7 @@ struct FLACMetadata: Equatable {
         Data, FLACTagsError
     > {
         let length = block.body.count
-        guard length < 1 << 24 else {
+        guard length < maximumBlockLength else {
             return .failure(.malformed(path))
         }
         let header: [UInt8] = [

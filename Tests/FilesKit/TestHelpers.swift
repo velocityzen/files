@@ -119,7 +119,7 @@ enum TestHelpers {
     /// Files in a directory whose name marks them as an unfinished copy
     static func leftoverTempFiles(in url: URL) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: url.path(percentEncoded: false))
-            .filter { $0.hasSuffix(".files-tmp") }
+            .filter { $0.contains(temporaryFileMarker) }
     }
 
     /// The built `files` executable, which sits next to the test bundle

@@ -190,6 +190,12 @@ struct OpenFile {
         }
         return .success(filled)
     }
+
+    /// Moves the offset the next read starts at
+    func seek(to offset: Int) -> Result<Void, FileSystemError> {
+        lseek(descriptor, off_t(offset), SEEK_SET) >= 0
+            ? .success(()) : .failure(posixFailure(.read, path: path))
+    }
 }
 
 /// Opens a file read-only, following symbolic links
@@ -234,6 +240,102 @@ func setFileAttributes(_ attributes: FileAttributes, at path: String) -> Result<
     values[.posixPermissions] = attributes.posixPermissions
     values[.modificationDate] = attributes.modificationDate
     return perform(.setAttributes, path: path) { try $0.setAttributes(values, ofItemAtPath: path) }
+}
+
+/// A file opened for writing, see `createForWriting(_:)` and `openForUpdating(_:)`
+struct OutputFile {
+    let descriptor: Int32
+    let path: String
+
+    /// Writes all of the bytes at the current offset
+    func writeChunk(_ bytes: UnsafeRawBufferPointer) -> Result<Void, FileSystemError> {
+        guard let start = bytes.baseAddress else {
+            return .success(())
+        }
+        var written = 0
+        while written < bytes.count {
+            let count = write(descriptor, start + written, bytes.count - written)
+            if count > 0 {
+                written += count
+            } else if count == 0 || errno != EINTR {
+                return .failure(posixFailure(.write, path: path))
+            }
+        }
+        return .success(())
+    }
+
+    func writeChunk(_ data: Data) -> Result<Void, FileSystemError> {
+        data.withUnsafeBytes { writeChunk($0) }
+    }
+}
+
+/// Creates a file and opens it for writing; anything already at the path, a symbolic link
+/// included, fails it
+func createFileDescriptor(forWritingAt path: String) -> Result<OutputFile, FileSystemError> {
+    let descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o666)
+    return descriptor >= 0
+        ? .success(OutputFile(descriptor: descriptor, path: path))
+        : .failure(posixFailure(.write, path: path))
+}
+
+/// Opens an existing file for writing at its start, without truncating it
+func openFileDescriptor(forUpdatingAt path: String) -> Result<OutputFile, FileSystemError> {
+    let descriptor = open(path, O_WRONLY | O_CLOEXEC)
+    return descriptor >= 0
+        ? .success(OutputFile(descriptor: descriptor, path: path))
+        : .failure(posixFailure(.write, path: path))
+}
+
+/// Closes a written file. Some volumes, network ones especially, only report a failed write
+/// when the file is closed, so that failure is the write's.
+func closeFileDescriptor(_ file: OutputFile) -> Result<Void, FileSystemError> {
+    close(file.descriptor) == 0 ? .success(()) : .failure(posixFailure(.write, path: file.path))
+}
+
+/// Bytes read and written at a time when copying contents
+let copyChunkSize = 1024 * 1024
+
+/// Copies what is left to read in `input` to `output`, a chunk at a time, so memory stays
+/// flat however large the file is
+/// - Parameter onChunk: Called with the bytes copied so far after each chunk
+/// - Returns: The number of bytes copied
+func copyContents(
+    from input: OpenFile,
+    to output: OutputFile,
+    onChunk: (Int64) -> Void = { _ in }
+) -> Result<Int64, FileSystemError> {
+    withUnsafeTemporaryAllocation(byteCount: copyChunkSize, alignment: 16) { buffer in
+        var copied: Int64 = 0
+        while true {
+            let chunk = input.readChunk(into: buffer).flatMap { count in
+                output.writeChunk(UnsafeRawBufferPointer(rebasing: buffer[..<count])).map { count }
+            }
+            guard case .success(let count) = chunk else {
+                return chunk.map { _ in copied }
+            }
+            copied += Int64(count)
+            if count > 0 {
+                onChunk(copied)
+            }
+            // A chunk that isn't full is the end of the file
+            if count < buffer.count {
+                return .success(copied)
+            }
+        }
+    }
+}
+
+/// Copies a file's bytes into a new file, see `copyContents(from:to:onChunk:)`. Only the
+/// bytes are copied: the new file has fresh metadata.
+func copyFileContents(
+    from source: String,
+    to destination: String,
+    onChunk: (Int64) -> Void = { _ in }
+) -> Result<Int64, FileSystemError> {
+    let files = openForReading(source).flatMap { input in
+        createForWriting(destination).map { output in (input, output) }
+    }
+    return files { input, output in copyContents(from: input, to: output, onChunk: onChunk) }
 }
 
 func writeFile(_ data: Data, to path: String, options: Data.WritingOptions = []) -> Result<

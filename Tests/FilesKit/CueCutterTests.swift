@@ -83,6 +83,10 @@ struct CueCutterTests {
         let path = try await collect(cutTracks(album.tracks, to: album.output))[0].get().path
         let before = try readSamples(path)
         let vendor = try FLACTags.read(at: path).get().vendor
+        let padding = FLACMetadata.Block(type: 1, body: Data(count: FLACTags.rewritePadding))
+        // Tagging a cut track moved its audio, so it got room for the next tags
+        #expect(try metadata(path).blocks.last == padding)
+        let file = try fileIdentity(path)
 
         try FLACTags.write([(key: "TITLE", value: "Новое")], to: path).get()
         try FLACTags.write([(key: "TITLE", value: "Новое название")], to: path).get()
@@ -91,6 +95,17 @@ struct CueCutterTests {
         #expect(tags.comments == ["TITLE=Новое название"])
         #expect(tags.vendor == vendor)
         #expect(try readSamples(path) == before)
+        // Both fit in the padding, so they were written in place
+        #expect(try fileIdentity(path) == file)
+
+        // Tags larger than the padding move the audio, which is copied after them unchanged
+        let long = String(repeating: "x", count: FLACTags.rewritePadding * 2)
+        try FLACTags.write([(key: "COMMENT", value: long)], to: path).get()
+        #expect(try FLACTags.read(at: path).get().comments == ["COMMENT=\(long)"])
+        #expect(try readSamples(path) == before)
+        #expect(try metadata(path).blocks.last == padding)
+        #expect(try fileIdentity(path) != file)
+        #expect(try leftovers(in: album.output).isEmpty)
 
         #expect(throws: FLACTagsError.notFLAC(album.cuePath)) {
             try FLACTags.read(at: album.cuePath).get()
@@ -235,6 +250,19 @@ struct CueCutterTests {
     private func leftovers(in directory: String) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: directory)
             .filter { $0.hasPrefix(".") }
+    }
+
+    private func metadata(_ path: String) throws -> FLACMetadata {
+        try FLACMetadata.parse(Data(contentsOf: URL(fileURLWithPath: path)), path: path).get()
+    }
+
+    /// The file's number and size, which a write in place leaves alone
+    private func fileIdentity(_ path: String) throws -> [Int] {
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        return [
+            try #require(attributes[.systemFileNumber] as? Int),
+            try #require(attributes[.size] as? Int),
+        ]
     }
 
     private func runFFmpeg(_ arguments: [String]) throws {

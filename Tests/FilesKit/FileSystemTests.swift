@@ -157,6 +157,96 @@ struct FileSystemTests {
                 == FileSystemError(operation: .read, path: missing, reason: .notFound))
     }
 
+    @Test("Copying contents reads and writes a chunk at a time, to the last byte")
+    func chunkedCopy() throws {
+        let directory = try TestHelpers.createTestDirectory(files: [:])
+        defer { try? TestHelpers.cleanupTestDirectory(directory) }
+        let bytes = Data((0..<(copyChunkSize * 5 / 2)).map { UInt8(truncatingIfNeeded: $0 &* 7) })
+        let source = path(directory, "source")
+        try bytes.write(to: URL(filePath: source))
+
+        var chunks: [Int64] = []
+        let copy = path(directory, "copy")
+        #expect(
+            try copyFileContents(from: source, to: copy) { chunks.append($0) }.get()
+                == Int64(bytes.count))
+        #expect(try Data(contentsOf: URL(filePath: copy)) == bytes)
+        let megabyte = Int64(copyChunkSize)
+        #expect(chunks == [megabyte, 2 * megabyte, Int64(bytes.count)])
+
+        let empty = path(directory, "empty")
+        try Data().write(to: URL(filePath: empty))
+        chunks = []
+        #expect(
+            try copyFileContents(from: empty, to: path(directory, "empty copy")) {
+                chunks.append($0)
+            }.get() == 0)
+        #expect(chunks.isEmpty)
+
+        let missing = path(directory, "missing")
+        #expect(
+            copyFileContents(from: missing, to: path(directory, "never")).error
+                == FileSystemError(operation: .read, path: missing, reason: .notFound))
+        #expect(!fileExists(at: path(directory, "never")))
+    }
+
+    @Test("A new file never replaces what is at its path, a symbolic link included")
+    func createOverExisting() throws {
+        let directory = try TestHelpers.createTestDirectory(files: [
+            "source": "new", "existing": "keep", "target": "keep too",
+        ])
+        defer { try? TestHelpers.cleanupTestDirectory(directory) }
+        let link = path(directory, "link")
+        try FileManager.default.createSymbolicLink(
+            atPath: link, withDestinationPath: path(directory, "target"))
+
+        for destination in [path(directory, "existing"), link] {
+            #expect(
+                copyFileContents(from: path(directory, "source"), to: destination).error
+                    == FileSystemError(operation: .write, path: destination, reason: .alreadyExists)
+            )
+        }
+        #expect(
+            try TestHelpers.readFile(at: directory.appendingPathComponent("existing")) == "keep")
+        #expect(
+            try TestHelpers.readFile(at: directory.appendingPathComponent("target")) == "keep too")
+    }
+
+    @Test("Updating a file writes over its start and keeps the rest")
+    func updateInPlace() throws {
+        let directory = try TestHelpers.createTestDirectory(files: ["file": "abcdef"])
+        defer { try? TestHelpers.cleanupTestDirectory(directory) }
+
+        let withFile = openForUpdating(path(directory, "file"))
+        #expect(withFile { $0.writeChunk(Data("XY".utf8)) }.error == nil)
+        #expect(try TestHelpers.readFile(at: directory.appendingPathComponent("file")) == "XYcdef")
+    }
+
+    @Test("Temporary files are hidden and marked next to the destination, with its extension")
+    func temporaryFileNames() throws {
+        let directory = "/some/folder"
+        func name(nextTo destination: String) throws -> String {
+            let withTemporaryFile = temporaryFile(nextTo: "\(directory)/\(destination)")
+            let path = try withTemporaryFile { .success($0) }.get()
+            #expect((path as NSString).deletingLastPathComponent == directory)
+            return (path as NSString).lastPathComponent
+        }
+
+        let track = try name(nextTo: "01 - Track.flac")
+        #expect(track.hasPrefix("."))
+        #expect(track.hasSuffix("\(temporaryFileMarker).flac"))
+        #expect(try name(nextTo: "README").hasSuffix(temporaryFileMarker))
+        #expect(try name(nextTo: "a") != (try name(nextTo: "a")))
+
+        // A destination name as long as a name can be
+        let long = try name(nextTo: String(repeating: "n", count: 251) + ".bin")
+        #expect(long.hasSuffix("\(temporaryFileMarker).bin"))
+        // An extension too long to keep
+        let longExtension = try name(nextTo: "a." + String(repeating: "x", count: 250))
+        #expect(longExtension.hasSuffix(temporaryFileMarker))
+        #expect(longExtension.utf8.count <= Int(NAME_MAX))
+    }
+
     private func path(_ directory: URL, _ name: String) -> String {
         directory.appendingPathComponent(name).path(percentEncoded: false)
     }

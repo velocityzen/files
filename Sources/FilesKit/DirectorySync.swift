@@ -1,6 +1,7 @@
+import FP
 import Foundation
 
-let copyChunkSize = 1024 * 1024
+/// Files this large are copied a chunk at a time, reporting progress as they go
 let minSizeToChunk = copyChunkSize * 10
 
 public struct FileOperation: Sendable, Equatable, Hashable {
@@ -500,40 +501,52 @@ private func copyOperation(
         )
     }
 
-    // Copy next to the destination first, so a failed or interrupted copy
-    // never touches an existing file
-    let rightURL = URL(fileURLWithPath: operation.right)
-    let rightDir = rightURL.deletingLastPathComponent().path(percentEncoded: false)
-    let tempPath = rightURL.deletingLastPathComponent()
-        .appendingPathComponent(".\(rightURL.lastPathComponent).\(UUID().uuidString).files-tmp")
-        .path(percentEncoded: false)
-
-    do {
-        let attributes = try fileAttributes(at: left).get()
-        try createDirectory(at: rightDir).get()
-
-        if attributes.size < minSizeToChunk {
-            // For small files, use simple copy
-            try copyItem(at: left, to: tempPath).get()
-        } else {
-            try copyFileWithProgress(
-                from: left,
-                to: tempPath,
-                expectedFileSize: attributes.size
-            ) { bytesCopied in
+    fileAttributes(at: left)
+        .flatMap { attributes in
+            copyIntoPlace(left, to: operation.right, attributes) { bytesCopied in
                 continuation.success(operation: operation, bytesTransferred: bytesCopied)
             }
-
-            // A streamed copy has fresh metadata, so keep what copyItem would keep
-            try setFileAttributes(attributes, at: tempPath).get()
+            .map { attributes.size }
         }
+        .match(
+            { continuation.success(operation: operation, bytesTransferred: $0) },
+            { continuation.failure(operation: operation, error: $0) }
+        )
+}
 
-        try moveReplacingItem(at: tempPath, to: operation.right).get()
-        continuation.success(operation: operation, bytesTransferred: attributes.size)
-    } catch {
-        _ = removeItem(at: tempPath)
-        return continuation.failure(operation: operation, error: error)
+/// Copies next to the destination first and moves the copy into place, so a failed or
+/// interrupted copy never touches an existing file
+private func copyIntoPlace(
+    _ source: String,
+    to destination: String,
+    _ attributes: FileAttributes,
+    onProgress: (Int64) -> Void
+) -> Result<Void, FileSystemError> {
+    let directory = URL(fileURLWithPath: destination).deletingLastPathComponent()
+        .path(percentEncoded: false)
+    let withTemporaryFile = temporaryFile(nextTo: destination)
+    return createDirectory(at: directory).flatMap { _ in
+        withTemporaryFile { temporary in
+            copyFile(source, to: temporary, attributes, onProgress: onProgress)
+                .flatMap { _ in moveReplacingItem(at: temporary, to: destination) }
+        }
     }
+}
+
+private func copyFile(
+    _ source: String,
+    to destination: String,
+    _ attributes: FileAttributes,
+    onProgress: (Int64) -> Void
+) -> Result<Void, FileSystemError> {
+    if attributes.size < minSizeToChunk {
+        return copyItem(at: source, to: destination)
+    }
+    // A streamed copy has fresh metadata, so keep what copyItem would keep
+    return copyFileWithProgress(
+        from: source, to: destination, expectedFileSize: attributes.size, onProgress: onProgress
+    )
+    .flatMap { _ in setFileAttributes(attributes, at: destination) }
 }
 
 private func deleteOperation(for operation: FileOperation) -> OperationResult {
@@ -543,62 +556,27 @@ private func deleteOperation(for operation: FileOperation) -> OperationResult {
 }
 
 /// Copies a file in chunks, calling `onProgress` with the bytes copied so far at intervals
-internal func copyFileWithProgress(
+func copyFileWithProgress(
     from source: String,
     to destination: String,
     expectedFileSize: Int64,
     onProgress: (Int64) -> Void
-) throws {
-    let bufferSize = copyChunkSize
-
-    guard let inputStream = InputStream(fileAtPath: source) else {
-        throw DirectorySyncError.operationFailed("Failed to open source file")
-    }
-    guard let outputStream = OutputStream(toFileAtPath: destination, append: false) else {
-        throw DirectorySyncError.operationFailed("Failed to create destination file")
-    }
-
-    inputStream.open()
-    outputStream.open()
-
-    defer {
-        inputStream.close()
-        outputStream.close()
-    }
-
-    var buffer = [UInt8](repeating: 0, count: bufferSize)
-    var totalBytesRead: Int64 = 0
-    var lastReportedBytes: Int64 = 0
-
-    while inputStream.hasBytesAvailable {
-        let bytesRead = inputStream.read(&buffer, maxLength: bufferSize)
-
-        if bytesRead < 0 {
-            throw inputStream.streamError
-                ?? DirectorySyncError.operationFailed("Failed to read from source file")
-        }
-
-        if bytesRead == 0 {
-            break
-        }
-
-        let bytesWritten = outputStream.write(buffer, maxLength: bytesRead)
-        if bytesWritten != bytesRead {
-            throw outputStream.streamError
-                ?? DirectorySyncError.operationFailed("Failed to write to destination file")
-        }
-
-        totalBytesRead += Int64(bytesRead)
-
+) -> Result<Void, FileSystemError> {
+    var lastReported: Int64 = 0
+    return copyFileContents(from: source, to: destination) { copied in
         // Report progress only at intervals; the caller reports the final total
-        if totalBytesRead - lastReportedBytes >= minSizeToChunk {
-            onProgress(totalBytesRead)
-            lastReportedBytes = totalBytesRead
+        if copied - lastReported >= minSizeToChunk {
+            onProgress(copied)
+            lastReported = copied
         }
     }
-
-    if totalBytesRead != expectedFileSize {
-        throw DirectorySyncError.operationFailed(
-            "Transferred \(totalBytesRead) bytes, expected \(expectedFileSize)")
+    .flatMap { copied in
+        // The destination is a temporary file, so only the source is named
+        copied == expectedFileSize
+            ? .success(())
+            : .failure(
+                FileSystemError(
+                    operation: .copy, path: source,
+                    reason: .other("it changed size while being copied")))
     }
 }

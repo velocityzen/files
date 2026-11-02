@@ -73,6 +73,36 @@ struct FLACMetadataTests {
         #expect(try tagged.comments(path: "a.flac").get().comments == ["TITLE=One"])
     }
 
+    @Test("Padding is resized so new metadata takes the old one's bytes, when it can")
+    func fitting() throws {
+        let comments = VorbisComments(vendor: "encoder", comments: ["TITLE=One"])
+        // Padding in the middle, as some taggers leave it
+        let file = flac([Self.streamInfo, Self.padding, (4, comments.encoded)])
+        let metadata = try FLACMetadata.parse(file, path: "a.flac").get()
+        // The marker and the two blocks without padding
+        let unpadded = 4 + (4 + 34) + (4 + comments.encoded.count)
+
+        let exact = try #require(metadata.fitted(to: unpadded))
+        #expect(exact.blocks.map(\.type) == [0, 4])
+        #expect(try exact.encodedHeader(path: "a.flac").get().count == unpadded)
+
+        // Four spare bytes are an empty padding block's header
+        for spare in [4, 5, 100] {
+            let fitted = try #require(metadata.fitted(to: unpadded + spare))
+            #expect(fitted.blocks.map(\.type) == [0, 4, 1])
+            #expect(fitted.blocks.last?.body.count == spare - 4)
+            #expect(try fitted.encodedHeader(path: "a.flac").get().count == unpadded + spare)
+        }
+        for spare in [-1, 1, 3] {
+            #expect(metadata.fitted(to: unpadded + spare) == nil)
+        }
+
+        let padded = metadata.padded(by: 10)
+        #expect(padded.blocks.map(\.type) == [0, 4, 1])
+        #expect(padded.blocks.last?.body == Data(count: 10))
+        #expect(padded.audioOffset == metadata.audioOffset)
+    }
+
     /// A FLAC file with these metadata blocks followed by fake audio
     private func flac(_ blocks: [(type: UInt8, body: Data)]) -> Data {
         let encoded = blocks.enumerated().map { index, block in

@@ -113,6 +113,36 @@ struct CopySafetyTests {
         #expect(try TestHelpers.leftoverTempFiles(in: rightDir).isEmpty)
     }
 
+    @Test(
+        "Files with names near the length limit are copied, small and large",
+        arguments: [false, true])
+    func longNames(large: Bool) async throws {
+        let leftDir = try TestHelpers.createTestDirectory(files: [:])
+        let rightDir = try TestHelpers.createTestDirectory(files: [:])
+
+        defer {
+            try? TestHelpers.cleanupTestDirectory(leftDir)
+            try? TestHelpers.cleanupTestDirectory(rightDir)
+        }
+
+        // 250 bytes leaves no room to add anything to the name
+        let name = String(repeating: "n", count: 246) + ".bin"
+        let content = Data(repeating: 5, count: large ? largeFileSize : 10)
+        try content.write(to: leftDir.appendingPathComponent(name))
+
+        let results = await TestHelpers.collect(
+            await directorySync(
+                left: leftDir.path(percentEncoded: false),
+                right: rightDir.path(percentEncoded: false),
+                mode: .oneWay,
+                ignore: Ignore(patterns: [])
+            ))
+
+        #expect(results.failed == 0)
+        #expect(try Data(contentsOf: rightDir.appendingPathComponent(name)) == content)
+        #expect(try TestHelpers.leftoverTempFiles(in: rightDir).isEmpty)
+    }
+
     @Test("Two-way newest copies a newer left file to the right")
     func twoWayNewestLeftNewer() async throws {
         let leftDir = try TestHelpers.createTestDirectory(files: [:])
